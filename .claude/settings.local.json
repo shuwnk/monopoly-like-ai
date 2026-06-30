@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(corepack pnpm *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "WebFetch(domain:example.com)",
+      "Bash(echo \"tc=$?\")",
+      "Bash(echo \"lint=$?\")",
+      "Bash(echo \"test=$?\")",
+      "Bash(echo \"build=$?\")",
+      "Bash(npx vitest *)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "WebFetch(domain:docs.colyseus.io)",
+      "WebSearch",
+      "Bash(npm install *)",
+      "Bash(node -e \"console.log\\('colyseus.js resolves:', !!require.resolve\\('colyseus.js'\\)\\)\")",
+      "Bash(npx tsx *)",
+      "Bash(grep -rn '\\\\${' apps/web/src --include=\"*.tsx\")",
+      "Bash(grep -iE \"money|fine|rent|price|\\\\\\\\\\\\$\\\\{state|\\\\\\\\\\\\$\\\\{.*money|\\\\\\\\\\\\$\\\\{.*fine\")",
+      "Bash(grep -rn '\"\\\\$\"\\\\|>\\\\$\\\\|`\\\\$\\\\|\\\\$\\\\\\\\$\\\\|\\\\$\\\\{' apps/web/src --include=\"*.tsx\")",
+      "Bash(cd *)",
+      "Bash(pdflatex -interaction=nonstopmode -halt-on-error design.tex)",
+      "Bash(echo \"pass1: $?\")",
+      "Bash(echo \"pass2: $?\")",
+      "Bash(cat .gitignore)",
+      "Bash(find . -path ./node_modules -prune -o -type f \\\\\\( -name \"*.env*\" -o -name \".env\" -o -name \"*.pem\" -o -name \"*.key\" -o -name \"*secret*\" -o -name \"*credential*\" -o -name \"*.local.json\" -o -name \"*token*\" \\\\\\) -print)",
+      "Bash(ls -laR .claude)",
+      "Bash(git check-ignore *)"
+    ]
+  }
+}

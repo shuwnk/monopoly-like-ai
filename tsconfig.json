@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/types" },
+    { "path": "./packages/engine" },
+    { "path": "./packages/minigame-harness" },
+    { "path": "./packages/ai" },
+    { "path": "./apps/web" }
+  ]
+}

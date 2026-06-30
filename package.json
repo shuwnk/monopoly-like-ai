@@ -1,0 +1,28 @@
+{
+  "name": "party-monopoly",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Party Monopoly — faithful board with party minigames. Transport-independent, deterministic engine.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @party-monopoly/web",
+    "build": "npm run build --workspace @party-monopoly/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "sim": "npm run sim --workspace @party-monopoly/sim --",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.12.0",
+    "eslint": "^9.12.0",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.8.0"
+  }
+}
