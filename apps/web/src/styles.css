@@ -1,0 +1,183 @@
+/* Neon Night Market design tokens + base element styling. Defined once here so
+   every screen shares the same surfaces, accents, and controls — components
+   reference these vars inline (var(--panel), etc.) rather than hardcoding hex. */
+:root {
+  /* Business-Tour bright daylight. Neon is kept for the duel only (--neon-*). */
+  --bg: #bfe4f8;
+  --bg-2: #9fd0ef;
+  --panel: #ffffff;
+  --panel-2: #f5f7fc;
+  --panel-3: #e8edf6;
+  --border: #d4dbe8;
+  --border-2: #c1cbdb;
+  --text: #17293c;
+  --muted: #5b6b80;
+  --accent: #e0398f; /* magenta — primary CTAs */
+  --accent-2: #159fc0; /* cyan */
+  --good: #1fa64a;
+  --bad: #e23b2e;
+  --gold: #f0a81e;
+
+  /* reserved for the Reflex Duel "lights drop" moment */
+  --neon-a: #e0398f;
+  --neon-b: #23c4d6;
+  --neon-bg: #0e1017;
+
+  /* board */
+  --field: #3fa94d;
+  /* central grass green — golf-course infield: light centre, cooler at the rim */
+  --field-green: #77c157;
+  --field-green-light: #93d16e;
+  --field-green-dark: #52963e;
+  --tile-face: #fdfcf7;
+  --tile-side: #cdd4e0;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 10px 30px rgba(23, 41, 60, 0.18);
+  --shadow-sm: 0 2px 10px rgba(23, 41, 60, 0.12);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* rounded display face for board numerals/prices and money/heading numerals;
+     body text stays on --font. Loaded (weights 600 & 800) via index.html. */
+  --font-display: "Baloo 2", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(1200px 560px at 50% -6%, #eaf7ff 0%, transparent 60%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: 0.2px;
+}
+
+/* controls -------------------------------------------------------------- */
+button {
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 15px;
+  cursor: pointer;
+  transition:
+    transform 0.06s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* primary call-to-action (roll, create room, …) */
+button.primary {
+  background: linear-gradient(180deg, var(--accent) 0%, #b82b74 100%);
+  border-color: transparent;
+  color: #fff;
+}
+button.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 20px rgba(224, 57, 143, 0.5);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--border);
+}
+
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus {
+  border-color: var(--accent-2);
+  box-shadow: inset 0 0 0 1px var(--accent-2);
+}
+input::placeholder {
+  color: var(--muted);
+}
+
+kbd {
+  font: 600 0.85em var(--font);
+  background: var(--panel-3);
+  border: 1px solid var(--border-2);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--text);
+}
+
+/* thin dark scrollbars so panels don't get chrome-default light bars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-2) transparent;
+}
+
+/* board numerals (tile prices, headings) ride the rounded display face */
+.iso-num {
+  font-family: var(--font-display);
+}
+
+/* --- iso board motion ------------------------------------------------- */
+@keyframes dice-in {
+  0% { transform: translateY(-45%) rotate(-30deg) scale(0.5); opacity: 0; }
+  70% { transform: translateY(4%) rotate(8deg) scale(1.08); }
+  100% { transform: none; opacity: 1; }
+}
+.die-anim { animation: dice-in 0.5s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+
+/* a building rising into place (SVG group; needs fill-box origin) */
+@keyframes build-pop {
+  0% { transform: translateY(8px) scale(0.4); opacity: 0.15; }
+  60% { transform: translateY(-4px) scale(1.12); }
+  100% { transform: none; opacity: 1; }
+}
+.build-pop { animation: build-pop 0.55s cubic-bezier(0.2, 0.9, 0.25, 1) both; transform-box: fill-box; transform-origin: bottom center; }
+
+/* pawns sit in one layer above the tiles; moving a pawn re-positions the same
+   node, so a transform transition animates the hop between tiles */
+.iso-pawn { transition: transform 0.25s ease; }
+
+/* slow breathing glow on the active player's tile */
+@keyframes tile-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.tile-pulse { animation: tile-pulse 1.7s ease-in-out infinite; }

@@ -8,7 +8,14 @@ export type TurnPhase =
   | "MOVING"
   | "RESOLVING_SQUARE"
   | "AWAITING_BUY_DECISION"
+  // landing on a stall you own and can build on: choose to improve it one level
+  | "AWAITING_BUILD_DECISION"
+  // owe more than you hold: sell assets to cover the debt, or go bankrupt
+  | "AWAITING_DEBT_PAYMENT"
   | "RENT_SHOWDOWN"
+  // Copa: pick one of your properties to boost its rent; Aeroporto: pick where to fly
+  | "AWAITING_WORLD_CUP"
+  | "AWAITING_AIRPORT"
   | "TURN_END"
   | "GAME_OVER";
 
@@ -59,11 +66,18 @@ export interface GameState {
   readonly phase: TurnPhase;
   // square index -> owner; missing means unowned and buyable
   readonly ownership: Readonly<Record<number, PlayerId>>;
+  // square index -> build level (1..maxBuildLevel); missing means level 0 (bare)
+  readonly buildings: Readonly<Record<number, number>>;
+  // square index -> extra rent multiplier from Copa (World Cup); missing means 1
+  readonly rentBoosts: Readonly<Record<number, number>>;
   readonly lastRoll: readonly number[] | null;
   // doubles rolled in a row this turn; 3 sends to jail. reset at turn start
   readonly doublesCount: number;
   // laps completed; the round cap force-ends the game on net worth
   readonly round: number;
   readonly pendingMinigame: MinigameRequest | null;
+  // a debt the active player must cover by selling before the game continues;
+  // creditorIdx null means the money is owed to the bank. null = no debt pending.
+  readonly pendingDebt: { readonly amount: number; readonly creditorIdx: number | null } | null;
   readonly winnerId: PlayerId | null;
 }

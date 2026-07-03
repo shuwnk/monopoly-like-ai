@@ -5,7 +5,16 @@ import { useGameStore } from "../store/gameStore.js";
 // Collapsible dev panel for hotseat / vs-AI. Shows seed + live counters and lets
 // a tester shove the active player into edge states fast. All mutations go
 // through the store's debugPatch, which patches the local snapshot only.
-export function DebugPanel({ onRestart }: { onRestart: (seed: number) => void }): JSX.Element {
+export function DebugPanel({
+  onRestart,
+  flat,
+  onToggleFlat,
+}: {
+  onRestart: (seed: number) => void;
+  // the flat board is a debug-only renderer now; these wire its toggle
+  flat?: boolean;
+  onToggleFlat?: () => void;
+}): JSX.Element {
   const state = useGameStore((s) => s.state);
   const showdowns = useGameStore((s) => s.showdowns);
   const duelLog = useGameStore((s) => s.duelLog);
@@ -86,6 +95,27 @@ export function DebugPanel({ onRestart }: { onRestart: (seed: number) => void })
             >
               set money
             </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ opacity: 0.7 }}>preview:</span>
+            <button
+              disabled={!active}
+              onClick={() => {
+                if (!active) return;
+                // give the active player four stalls at levels 1..4 so all the
+                // house/hotel visuals show at once
+                debugPatch({
+                  ownership: { 1: active.id, 3: active.id, 5: active.id, 6: active.id },
+                  buildings: { 1: 1, 3: 2, 5: 3, 6: 4 },
+                });
+              }}
+            >
+              demo houses (1→hotel)
+            </button>
+            {onToggleFlat && (
+              <button onClick={onToggleFlat}>{flat ? "iso board" : "flat board"}</button>
+            )}
           </div>
 
           {duelLog.length > 0 && (

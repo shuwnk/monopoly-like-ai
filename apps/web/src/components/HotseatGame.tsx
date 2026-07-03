@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { decideAction } from "@party-monopoly/ai";
 import { useGameStore } from "../store/gameStore.js";
 import { toRecord } from "../telemetry/duel.js";
 import { Board } from "./Board.js";
+import { IsoBoard } from "./IsoBoard.js";
 import { DebugPanel } from "./DebugPanel.js";
 import { Hud } from "./Hud.js";
 import { ReflexTapDuel } from "./ReflexTapDuel.js";
+import { BuildPrompt, DebtPanel, airportTargets, copaTargets, sellTargets } from "./TurnChoices.js";
 
 // Hotseat shell: renders the mirrored snapshot and the buttons that dispatch
 // actions through the reducer. With vsAI, player 2 (p1) is a bot — an effect
@@ -19,6 +21,10 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
   const aiPlayerId = useGameStore((s) => s.aiPlayerId);
   const aiSkill = useGameStore((s) => s.aiSkill);
 
+  // the iso board is the only user-facing renderer; the flat board is a debug aid
+  const [flat, setFlat] = useState(false);
+  // voluntary "sell property" mode: turns the board into a sell-picker on your turn
+  const [sellMode, setSellMode] = useState(false);
   const restart = (seed: number): void => (vsAI ? newAIGame(seed) : newGame(seed));
 
   const active = state.players[state.activePlayerIndex];
@@ -57,10 +63,25 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
 
   const human = aiPlayerId ? "Play vs AI" : "Hotseat";
 
+  // what the board acts as a picker for this turn: fly-to (airport) or sell-tile
+  // (forced debt, or voluntary sell mode). null = normal, non-interactive board.
+  const airportPick = !aiTurn && state.phase === "AWAITING_AIRPORT" && !!active;
+  const copaPick = !aiTurn && state.phase === "AWAITING_WORLD_CUP" && !!active;
+  const debtPick = !aiTurn && state.phase === "AWAITING_DEBT_PAYMENT" && !!active;
+  const sellPick = !aiTurn && state.phase === "AWAITING_ROLL" && sellMode && !!active;
+  const boardPick =
+    airportPick
+      ? { pickTiles: airportTargets(state), onPickTile: (id: number) => dispatch({ type: "SELECT_AIRPORT_TILE", squareId: id }) }
+      : copaPick && active
+        ? { pickTiles: copaTargets(state, active.id), onPickTile: (id: number) => dispatch({ type: "SELECT_WORLD_CUP_TILE", squareId: id }) }
+        : (debtPick || sellPick) && active
+          ? { pickTiles: sellTargets(state, active.id), onPickTile: (id: number) => dispatch({ type: "SELL_TILE", squareId: id }) }
+          : null;
+
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", color: "#eee", background: "#111", minHeight: "100vh", padding: 24 }}>
+    <main style={{ minHeight: "100vh", padding: 24, maxWidth: 1440, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0 }}>Party Monopoly — {human}</h1>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Party Monopoly — {human}</h1>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => restart(Date.now())}>New game</button>
           <button onClick={onLeave}>Leave</button>
@@ -80,11 +101,11 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
       {aiTurn && <div style={{ margin: "8px 0", opacity: 0.7 }}>Bot is thinking…</div>}
 
       <section style={{ display: "flex", gap: 8, margin: "16px 0", flexWrap: "wrap" }}>
-        <button disabled={over || aiTurn || state.phase !== "AWAITING_ROLL"} onClick={() => dispatch({ type: "ROLL_DICE" })}>
+        <button className="primary" disabled={over || aiTurn || state.phase !== "AWAITING_ROLL"} onClick={() => dispatch({ type: "ROLL_DICE" })}>
           {inJail ? "Roll (try to escape jail)" : "Roll dice"}
         </button>
         <button disabled={over || aiTurn || !canPayFine} onClick={() => dispatch({ type: "PAY_JAIL_FINE" })}>
-          Pay fine (₸{state.tunables.jail.fine})
+          Pay fine (R${state.tunables.jail.fine})
         </button>
         <button disabled={over || aiTurn || state.phase !== "AWAITING_BUY_DECISION"} onClick={() => dispatch({ type: "BUY_PROPERTY" })}>
           Buy
@@ -95,23 +116,62 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
         <button disabled={over || aiTurn} onClick={() => dispatch({ type: "END_TURN" })}>
           End turn
         </button>
+        {!aiTurn && state.phase === "AWAITING_ROLL" && active && sellTargets(state, active.id).size > 0 && (
+          <button onClick={() => setSellMode((v) => !v)}>{sellMode ? "Done selling" : "Sell property"}</button>
+        )}
       </section>
+
+      {!aiTurn && state.phase === "AWAITING_BUILD_DECISION" && active && (
+        <BuildPrompt
+          state={state}
+          playerId={active.id}
+          onBuild={(squareId) => dispatch({ type: "BUILD_HOUSE", squareId })}
+          onSkip={() => dispatch({ type: "DECLINE_BUILD" })}
+        />
+      )}
+
+      {copaPick && (
+        <section style={{ margin: "8px 0 16px", padding: 12, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--accent)", fontSize: 14, fontWeight: 700 }}>
+          ⚽ Copa — tap one of your highlighted cities on the board to double its rent.
+        </section>
+      )}
+
+      {!aiTurn && state.phase === "AWAITING_AIRPORT" && active && (
+        <section style={{ margin: "8px 0 16px", padding: 12, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--accent)", fontSize: 14, fontWeight: 700 }}>
+          ✈️ Aeroporto — tap a highlighted city on the board to fly there.
+        </section>
+      )}
+
+      {!aiTurn && debtPick && active && (
+        <DebtPanel
+          state={state}
+          playerId={active.id}
+          onAutoSell={() => dispatch({ type: "AUTO_SELL" })}
+          onBankrupt={() => dispatch({ type: "DECLARE_BANKRUPT", playerId: active.id })}
+        />
+      )}
+
+      {sellPick && (
+        <section style={{ margin: "8px 0 16px", padding: 12, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--accent)", fontSize: 14, fontWeight: 700 }}>
+          💰 Sell mode — tap a highlighted city to sell it (or its top house). <button style={{ marginLeft: 8 }} onClick={() => setSellMode(false)}>Done</button>
+        </section>
+      )}
 
       {state.phase === "RENT_SHOWDOWN" && state.pendingMinigame && (
         <ReflexTapDuel
           key={state.pendingMinigame.context.stakeData.propertyId + "-" + state.activePlayerIndex}
           request={state.pendingMinigame}
           onResult={(r) => dispatch({ type: "SUBMIT_MINIGAME_RESULT", result: r })}
-          onMetrics={(r, inputs) => logDuel(toRecord(r, inputs))}
+          onMetrics={(r, inputs, meta) => logDuel(toRecord(r, inputs, { preGoDelayMs: meta.preGoDelayMs, devices: meta.devices }))}
           {...(aiSeat !== undefined ? { aiSeat, aiSkill } : {})}
         />
       )}
 
       <section>
-        <Board state={state} />
+        {flat ? <Board state={state} /> : <IsoBoard state={state} {...(boardPick ?? {})} />}
       </section>
 
-      <DebugPanel onRestart={restart} />
+      <DebugPanel onRestart={restart} flat={flat} onToggleFlat={() => setFlat((f) => !f)} />
     </main>
   );
 }

@@ -42,10 +42,13 @@ export function createInitialState(config: NewGameConfig): GameState {
     activePlayerIndex: 0,
     phase: "AWAITING_ROLL",
     ownership: {},
+    buildings: {},
+    rentBoosts: {},
     lastRoll: null,
     doublesCount: 0,
     round: 0,
     pendingMinigame: null,
+    pendingDebt: null,
     winnerId: null,
   };
 }

@@ -33,11 +33,28 @@ export function DuelPractice({ onLeave }: { onLeave: () => void }): JSX.Element 
     setArmed(true);
   }
 
+  // dump the raw records so a fairness session can compute medians, win-rate
+  // symmetry, and draw margins offline — the on-screen aggregates round too hard
+  // to defend a go/no-go verdict on their own.
+  function exportRecords(): void {
+    console.log("[duel-session]", records);
+    const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `duel-session-${records.length}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", color: "#eee", background: "#111", minHeight: "100vh", padding: 24 }}>
+    <main style={{ minHeight: "100vh", padding: 24, maxWidth: 900, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0 }}>Party Monopoly — Duel Practice</h1>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Party Monopoly — Duel Practice</h1>
         <div style={{ display: "flex", gap: 8 }}>
+          <button disabled={records.length === 0} onClick={exportRecords}>
+            Export JSON ({records.length})
+          </button>
           <button
             onClick={() => {
               setRecords([]);
@@ -60,7 +77,12 @@ export function DuelPractice({ onLeave }: { onLeave: () => void }): JSX.Element 
             // adjudication already captured via onMetrics; just pause for "next"
             setArmed(false);
           }}
-          onMetrics={(result, inputs) => setRecords((rs) => [...rs, toRecord(result, inputs)])}
+          onMetrics={(result, inputs, meta) =>
+            setRecords((rs) => [
+              ...rs,
+              toRecord(result, inputs, { preGoDelayMs: meta.preGoDelayMs, devices: meta.devices, roundIndex: rs.length }),
+            ])
+          }
         />
       ) : (
         <section style={{ margin: "16px 0", padding: 24, textAlign: "center", border: "1px solid #444", borderRadius: 4 }}>
@@ -105,13 +127,27 @@ function Scoreboard({ stats }: { stats: ReturnType<typeof aggregate> }): JSX.Ele
             <td style={cell}>{ms(stats.p1AvgReactionMs)}</td>
           </tr>
           <tr>
+            <td style={cell}>median reaction</td>
+            <td style={cell}>{ms(stats.p0MedianReactionMs)}</td>
+            <td style={cell}>{ms(stats.p1MedianReactionMs)}</td>
+          </tr>
+          <tr>
             <td style={cell}>false starts</td>
             <td style={cell}>{stats.p0FalseStarts}</td>
             <td style={cell}>{stats.p1FalseStarts}</td>
           </tr>
+          <tr>
+            <td style={cell} title="real taps faster than the 100ms human floor — online would demote these">
+              sub-100ms taps
+            </td>
+            <td style={cell}>{stats.p0SubFloor}</td>
+            <td style={cell}>{stats.p1SubFloor}</td>
+          </tr>
         </tbody>
       </table>
-      <div style={{ marginTop: 8, opacity: 0.7 }}>draws: {stats.draws}</div>
+      <div style={{ marginTop: 8, opacity: 0.7 }}>
+        draws: {stats.draws} · device is recorded per tap in the exported JSON
+      </div>
     </section>
   );
 }

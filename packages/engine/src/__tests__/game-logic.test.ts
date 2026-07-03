@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { asMinigameId, asPlayerId, type MinigameResult, type PlayerId } from "@party-monopoly/types";
 import type { GameAction } from "../actions.js";
+import { ISLAND_IDS } from "../board.js";
 import { createInitialState } from "../init.js";
 import { reduce } from "../reducer.js";
 import type { GameState, PlayerState } from "../state.js";
@@ -49,13 +50,13 @@ describe("pass GO", () => {
 describe("buying property", () => {
   it("deducts price and assigns ownership", () => {
     let s = newGame(1);
-    // park on square 1 (a property) awaiting a buy decision
-    s = withPlayer(s, 0, { position: 1 });
+    // park on square 1 (a property) awaiting a buy decision, with cash to spare
+    s = withPlayer(s, 0, { position: 1, money: 200000 });
     s = { ...s, phase: "AWAITING_BUY_DECISION" };
     const price = s.board[1]!.property!.price;
     const after = reduce(s, { type: "BUY_PROPERTY" }).state;
     expect(after.ownership[1]).toBe(p0);
-    expect(after.players[0]!.money).toBe(1500 - price);
+    expect(after.players[0]!.money).toBe(200000 - price);
   });
 
   it("decline leaves the square unowned", () => {
@@ -126,65 +127,267 @@ describe("rent settlement", () => {
     expect(after.players[1]!.money).toBe(1500 + 100);
   });
 
-  it("bankrupts the payer when rent exceeds their cash and releases their props", () => {
+  it("rent you can't cover in cash opens the debt phase; bankrupting releases props", () => {
     let s = rentState();
-    s = withPlayer(s, 0, { money: 40 }); // owes 150, only has 40
-    s = { ...s, ownership: { 3: p1, 5: p0 } }; // p0 also owns square 5
-    const { state, events } = reduce(s, {
+    s = withPlayer(s, 0, { money: 40 }); // owes 150, only 40 cash — but owns sq 5
+    s = { ...s, ownership: { 3: p1, 5: p0 } };
+    const owed = reduce(s, {
       type: "SUBMIT_MINIGAME_RESULT",
       result: result("COMPLETED", "P1_WIN", [p1, p0]),
-    });
-    expect(state.players[0]!.bankrupt).toBe(true);
-    expect(state.players[0]!.money).toBe(0);
-    expect(state.players[1]!.money).toBe(1540); // got everything the payer had
-    expect(state.ownership[5]).toBeUndefined(); // released to unowned
-    expect(events.some((e) => e.type === "RENT_PAID" && e.amount === 40)).toBe(true);
+    }).state;
+    expect(owed.phase).toBe("AWAITING_DEBT_PAYMENT"); // sellable, so not instant bankruptcy
+    // give up instead of selling -> bankrupt to the owner, props released
+    const after = reduce(owed, { type: "DECLARE_BANKRUPT", playerId: p0 }).state;
+    expect(after.players[0]!.bankrupt).toBe(true);
+    expect(after.ownership[5]).toBeUndefined();
+  });
+
+  it("selling to cover the rent settles the debt and keeps you in the game", () => {
+    let s = rentState();
+    s = withPlayer(s, 0, { money: 40 });
+    s = { ...s, ownership: { 3: p1, 5: p0 } };
+    const owed = reduce(s, {
+      type: "SUBMIT_MINIGAME_RESULT",
+      result: result("COMPLETED", "P1_WIN", [p1, p0]),
+    }).state;
+    expect(owed.phase).toBe("AWAITING_DEBT_PAYMENT");
+    const after = reduce(owed, { type: "AUTO_SELL" }).state;
+    expect(after.players[0]!.bankrupt).toBe(false); // sold sq 5, paid the 150 rent
+    expect(after.pendingDebt).toBeNull();
+    expect(after.ownership[5]).toBeUndefined(); // sold to raise the money
+  });
+
+  it("instant bankruptcy when there's nothing to sell", () => {
+    let s = rentState();
+    s = withPlayer(s, 0, { money: 40 }); // owns nothing to sell
+    const after = reduce(s, {
+      type: "SUBMIT_MINIGAME_RESULT",
+      result: result("COMPLETED", "P1_WIN", [p1, p0]),
+    }).state;
+    expect(after.players[0]!.bankrupt).toBe(true);
   });
 });
 
-describe("rent escalation", () => {
-  // owner (p1) holds three stalls; with step 0.5 that's a 2.0x escalation
-  function escalatedState(tunables: object): GameState {
-    let s = newGame(1, tunables);
-    s = withPlayer(s, 0, { position: 3 });
-    s = { ...s, ownership: { 3: p1, 5: p1, 6: p1 } };
-    const request = {
-      minigameId: asMinigameId("reflex-tap-duel"),
-      participants: [
-        { playerId: p0, isAI: false },
-        { playerId: p1, isAI: false },
-      ],
-      context: { reason: "RENT_SHOWDOWN" as const, stakeData: { baseRent: 100, propertyId: 3 } },
-      config: {},
-    };
-    return { ...s, phase: "RENT_SHOWDOWN", pendingMinigame: request };
+describe("building houses (build on landing)", () => {
+  // p0 stands on `squareId` (a stall they own) with the game paused for a build
+  function landedOn(
+    squareId: number,
+    opts: { ownership: Record<number, PlayerId>; buildings?: Record<number, number>; money?: number; tunables?: object },
+  ): GameState {
+    let s = newGame(1, opts.tunables ?? {});
+    s = withPlayer(s, 0, { position: squareId, money: opts.money ?? 200000 });
+    return { ...s, ownership: opts.ownership, buildings: opts.buildings ?? {}, phase: "AWAITING_BUILD_DECISION" };
   }
 
-  it("leaves rent flat when the step is 0 (default)", () => {
-    const after = reduce(escalatedState({ rentEscalationStep: 0 }), {
-      type: "SUBMIT_MINIGAME_RESULT",
-      result: result("COMPLETED", "DRAW", [p0, p1]),
-    }).state;
-    expect(after.players[0]!.money).toBe(1500 - 100); // 100 * 1.0 * 1.0
+  it("offers a build only when you land on your own buildable stall", () => {
+    // fly onto an owned, buildable stall -> the engine pauses to offer one build
+    let s = newGame(1);
+    s = withPlayer(s, 0, { money: 200000 });
+    s = { ...s, ownership: { 1: p0, 3: p0 }, phase: "AWAITING_AIRPORT" };
+    const after = reduce(s, { type: "SELECT_AIRPORT_TILE", squareId: 1 }).state;
+    expect(after.phase).toBe("AWAITING_BUILD_DECISION");
+    expect(after.players[0]!.position).toBe(1);
   });
 
-  it("scales rent by the owner's holdings", () => {
-    // 3 properties -> 1 + 0.5*(3-1) = 2.0x, on top of the 1.5x owner-win
-    const after = reduce(escalatedState({ rentEscalationStep: 0.5, rentEscalationCap: 4 }), {
-      type: "SUBMIT_MINIGAME_RESULT",
-      result: result("COMPLETED", "P1_WIN", [p1, p0]),
-    }).state;
-    expect(after.players[0]!.money).toBe(1500 - 300); // 100 * 1.5 * 2.0
-    expect(after.players[1]!.money).toBe(1500 + 300);
+  it("improves the landed stall one level and charges the cost", () => {
+    const s = landedOn(1, { ownership: { 1: p0, 3: p0 } }); // owns all of Norte
+    const cost = Math.round(s.board[1]!.property!.price * s.tunables.buildCostFraction);
+    const after = reduce(s, { type: "BUILD_HOUSE", squareId: 1 });
+    expect(after.state.buildings[1]).toBe(1);
+    expect(after.state.players[0]!.money).toBe(200000 - cost);
+    expect(after.events.some((e) => e.type === "HOUSE_BUILT" && e.level === 1)).toBe(true);
+    expect(after.state.phase).not.toBe("AWAITING_BUILD_DECISION"); // one build, then the turn moves on
   });
 
-  it("never exceeds the escalation cap", () => {
-    // 3 properties would be 2.0x, but the cap pins it to 1.5x
-    const after = reduce(escalatedState({ rentEscalationStep: 0.5, rentEscalationCap: 1.5 }), {
-      type: "SUBMIT_MINIGAME_RESULT",
-      result: result("COMPLETED", "DRAW", [p0, p1]),
-    }).state;
-    expect(after.players[0]!.money).toBe(1500 - 150); // 100 * 1.0 * 1.5 (capped)
+  it("one improvement per landing: a second build the same turn is rejected", () => {
+    const once = reduce(landedOn(1, { ownership: { 1: p0, 3: p0 } }), { type: "BUILD_HOUSE", squareId: 1 }).state;
+    expect(once.buildings[1]).toBe(1);
+    const again = reduce(once, { type: "BUILD_HOUSE", squareId: 1 }).state;
+    expect(again.buildings[1]).toBe(1); // no chaining; you must land on it again to go higher
+  });
+
+  it("only builds the stall you're standing on", () => {
+    const s = landedOn(1, { ownership: { 1: p0, 3: p0 } }); // owns 3 too, but stands on 1
+    expect(reduce(s, { type: "BUILD_HOUSE", squareId: 3 }).state.buildings[3]).toBeUndefined();
+  });
+
+  it("declining leaves it unbuilt and ends the build choice", () => {
+    const after = reduce(landedOn(1, { ownership: { 1: p0, 3: p0 } }), { type: "DECLINE_BUILD" }).state;
+    expect(after.buildings[1]).toBeUndefined();
+    expect(after.phase).not.toBe("AWAITING_BUILD_DECISION");
+  });
+
+  it("does not offer a build when landing on an already-maxed stall", () => {
+    let s = newGame(1);
+    s = withPlayer(s, 0, { money: 200000 });
+    s = { ...s, ownership: { 1: p0, 3: p0 }, buildings: { 1: 4 }, phase: "AWAITING_AIRPORT" };
+    const after = reduce(s, { type: "SELECT_AIRPORT_TILE", squareId: 1 }).state;
+    expect(after.phase).not.toBe("AWAITING_BUILD_DECISION");
+  });
+
+  it("graduated gate: partial ownership caps the level at stalls owned", () => {
+    // owns 1 of Norte's 2 stalls: first landing builds level 1...
+    const first = reduce(landedOn(1, { ownership: { 1: p0 } }), { type: "BUILD_HOUSE", squareId: 1 }).state;
+    expect(first.buildings[1]).toBe(1);
+    // ...but at level 1 with one stall owned the cap is hit — no further build
+    const maxed = landedOn(1, { ownership: { 1: p0 }, buildings: { 1: 1 } });
+    expect(reduce(maxed, { type: "BUILD_HOUSE", squareId: 1 }).state.buildings[1]).toBe(1);
+  });
+
+  it("graduated gate: the hotel is reserved for completing the district", () => {
+    // Metrópole (6 stalls) at level 3, owning only 4 -> no hotel
+    const partial = landedOn(31, {
+      ownership: Object.fromEntries([31, 32, 34, 35].map((id) => [id, p0])),
+      buildings: { 31: 3 },
+      money: 1_000_000,
+    });
+    expect(reduce(partial, { type: "BUILD_HOUSE", squareId: 31 }).state.buildings[31]).toBe(3);
+    // owning all six unlocks the hotel
+    const whole = landedOn(31, {
+      ownership: Object.fromEntries([31, 32, 34, 35, 37, 39].map((id) => [id, p0])),
+      buildings: { 31: 3 },
+      money: 1_000_000,
+    });
+    expect(reduce(whole, { type: "BUILD_HOUSE", squareId: 31 }).state.buildings[31]).toBe(4);
+  });
+
+  it("hard monopoly gate: refuses to build without the whole district", () => {
+    const s = landedOn(1, { ownership: { 1: p0 }, tunables: { requireMonopolyToBuild: true } }); // missing sq 3
+    expect(reduce(s, { type: "BUILD_HOUSE", squareId: 1 }).state.buildings[1]).toBeUndefined();
+  });
+
+  it("scales showdown rent by the build level", () => {
+    // baseRent 100, hotel factor 5.5, owner-win 1.5x -> 825
+    let s = newGame(1);
+    s = withPlayer(s, 0, { position: 3 });
+    s = { ...s, ownership: { 3: p1, 5: p1, 6: p1 }, buildings: { 3: 4 }, phase: "RENT_SHOWDOWN",
+      pendingMinigame: {
+        minigameId: asMinigameId("reflex-tap-duel"),
+        participants: [{ playerId: p0, isAI: false }, { playerId: p1, isAI: false }],
+        context: { reason: "RENT_SHOWDOWN" as const, stakeData: { baseRent: 100, propertyId: 3 } },
+        config: {},
+      } };
+    const after = reduce(s, { type: "SUBMIT_MINIGAME_RESULT", result: result("COMPLETED", "P1_WIN", [p1, p0]) });
+    // p0 can't cover 825 from 1500? 1500-825 = 675, fine
+    expect(after.state.players[0]!.money).toBe(1500 - 825);
+  });
+
+  it("releases buildings when the owner goes bankrupt from the debt phase", () => {
+    let s = newGame(1);
+    s = withPlayer(s, 0, { position: 3, money: 40 });
+    s = { ...s, ownership: { 3: p1, 5: p0 }, buildings: { 5: 2 } }; // p0 owns+built sq 5
+    s = { ...s, phase: "RENT_SHOWDOWN", pendingMinigame: {
+      minigameId: asMinigameId("reflex-tap-duel"),
+      participants: [{ playerId: p0, isAI: false }, { playerId: p1, isAI: false }],
+      context: { reason: "RENT_SHOWDOWN" as const, stakeData: { baseRent: 100, propertyId: 3 } },
+      config: {},
+    } };
+    const owed = reduce(s, { type: "SUBMIT_MINIGAME_RESULT", result: result("COMPLETED", "P1_WIN", [p1, p0]) }).state;
+    expect(owed.phase).toBe("AWAITING_DEBT_PAYMENT");
+    const after = reduce(owed, { type: "DECLARE_BANKRUPT", playerId: p0 }).state;
+    expect(after.players[0]!.bankrupt).toBe(true);
+    expect(after.buildings[5]).toBeUndefined(); // released with the property
+  });
+});
+
+describe("selling", () => {
+  it("voluntarily sells a bare property on your turn for the full price", () => {
+    let s: GameState = { ...newGame(1), phase: "AWAITING_ROLL", ownership: { 1: p0 } };
+    s = withPlayer(s, 0, { money: 1000 });
+    const price = s.board[1]!.property!.price;
+    const after = reduce(s, { type: "SELL_TILE", squareId: 1 }).state;
+    expect(after.ownership[1]).toBeUndefined();
+    expect(after.players[0]!.money).toBe(1000 + price); // sellFraction 1.0 = full price
+    expect(after.phase).toBe("AWAITING_ROLL"); // voluntary sale, turn continues
+  });
+
+  it("selling a built stall sells the top house level first, keeping the land", () => {
+    let s: GameState = { ...newGame(1), phase: "AWAITING_ROLL", ownership: { 1: p0 }, buildings: { 1: 2 } };
+    s = withPlayer(s, 0, { money: 1000 });
+    const refund = Math.round(s.board[1]!.property!.price * s.tunables.buildCostFraction * s.tunables.sellFraction);
+    const after = reduce(s, { type: "SELL_TILE", squareId: 1 }).state;
+    expect(after.buildings[1]).toBe(1); // one level down, still owned
+    expect(after.ownership[1]).toBe(p0);
+    expect(after.players[0]!.money).toBe(1000 + refund);
+  });
+
+  it("can't sell a stall you don't own", () => {
+    const s: GameState = { ...newGame(1), phase: "AWAITING_ROLL", ownership: { 1: p1 } };
+    const after = reduce(s, { type: "SELL_TILE", squareId: 1 }).state;
+    expect(after.ownership[1]).toBe(p1);
+  });
+});
+
+describe("Copa (World Cup) rent boost", () => {
+  it("doubles the chosen property's rent for the rest of the game", () => {
+    // p0 owns square 3; land it on Copa (square 20) and boost square 3
+    let s = newGame(1);
+    s = { ...s, ownership: { 3: p0 }, phase: "AWAITING_WORLD_CUP" as const };
+    const boosted = reduce(s, { type: "SELECT_WORLD_CUP_TILE", squareId: 3 }).state;
+    expect(boosted.rentBoosts[3]).toBe(2);
+
+    // now p1 lands on square 3: rent = baseRent 100 * draw 1.0 * boost 2 = 200
+    let r: GameState = { ...boosted, phase: "RENT_SHOWDOWN" };
+    r = withPlayer(r, 1, { position: 3 });
+    r = {
+      ...r,
+      activePlayerIndex: 1,
+      pendingMinigame: {
+        minigameId: asMinigameId("reflex-tap-duel"),
+        participants: [
+          { playerId: p1, isAI: false },
+          { playerId: p0, isAI: false },
+        ],
+        context: { reason: "RENT_SHOWDOWN" as const, stakeData: { baseRent: 100, propertyId: 3 } },
+        config: {},
+      },
+    };
+    const after = reduce(r, { type: "SUBMIT_MINIGAME_RESULT", result: result("COMPLETED", "DRAW", [p1, p0]) }).state;
+    expect(after.players[1]!.money).toBe(1500 - 200);
+  });
+
+  it("refuses to boost a property you don't own", () => {
+    let s = newGame(1);
+    s = { ...s, ownership: { 3: p1 }, phase: "AWAITING_WORLD_CUP" as const };
+    const after = reduce(s, { type: "SELECT_WORLD_CUP_TILE", squareId: 3 }).state;
+    expect(after.rentBoosts[3]).toBeUndefined();
+  });
+
+  it("stacks: re-boosting the same tile multiplies again", () => {
+    let s: GameState = { ...newGame(1), ownership: { 3: p0 }, phase: "AWAITING_WORLD_CUP" };
+    s = reduce(s, { type: "SELECT_WORLD_CUP_TILE", squareId: 3 }).state;
+    expect(s.rentBoosts[3]).toBe(2);
+    // land Copa again as p0 and re-pick the same stall: ×2 again -> ×4
+    s = { ...s, phase: "AWAITING_WORLD_CUP", activePlayerIndex: 0 };
+    s = reduce(s, { type: "SELECT_WORLD_CUP_TILE", squareId: 3 }).state;
+    expect(s.rentBoosts[3]).toBe(4);
+  });
+});
+
+// The engine must never park in a choice phase that has no legal choice — that's
+// the class of bug behind the fixed Copa hang (the sim loops forever / a human
+// stares at a dead pick screen). Flying via the airport lets us drive resolveLanding
+// onto any square deterministically, without fishing for dice.
+describe("no-legal-choice phases auto-advance (softlock guards)", () => {
+  function flyTo(squareId: number, patch: Partial<GameState> = {}): GameState {
+    const s: GameState = { ...newGame(1), phase: "AWAITING_AIRPORT", ...patch };
+    return reduce(s, { type: "SELECT_AIRPORT_TILE", squareId }).state;
+  }
+
+  it("skips Copa when the lander owns nothing to boost", () => {
+    // land on Copa (square 20) owning no property -> no pick, turn proceeds
+    const after = flyTo(20);
+    expect(after.phase).not.toBe("AWAITING_WORLD_CUP");
+  });
+
+  it("offers Copa when the lander owns an unboosted stall", () => {
+    const after = flyTo(20, { ownership: { 3: p0 } });
+    expect(after.phase).toBe("AWAITING_WORLD_CUP");
+  });
+
+  it("still offers Copa on an already-boosted stall (boosts stack)", () => {
+    const after = flyTo(20, { ownership: { 3: p0 }, rentBoosts: { 3: 2 } });
+    expect(after.phase).toBe("AWAITING_WORLD_CUP");
   });
 });
 
@@ -199,6 +402,50 @@ describe("win condition", () => {
     expect(state.phase).toBe("GAME_OVER");
     expect(state.winnerId).toBe(p1);
     expect(events.some((e) => e.type === "GAME_OVER")).toBe(true);
+  });
+});
+
+describe("bankruptcy cleanup across paths", () => {
+  it("tax bankruptcy frees the debtor's buildings and Copa boosts, and ends a 2p game", () => {
+    // p0 owns a built + boosted stall but can't cover the tax; fly them onto it
+    let s: GameState = {
+      ...newGame(1, { taxAmount: 100 }),
+      phase: "AWAITING_AIRPORT",
+      ownership: { 5: p0 },
+      buildings: { 5: 2 },
+      rentBoosts: { 5: 2 },
+    };
+    s = withPlayer(s, 0, { money: 40 }); // owes 100
+    const owed = reduce(s, { type: "SELECT_AIRPORT_TILE", squareId: 4 }).state; // square 4 = TAX
+    expect(owed.phase).toBe("AWAITING_DEBT_PAYMENT");
+    const after = reduce(owed, { type: "DECLARE_BANKRUPT", playerId: p0 }).state;
+    expect(after.players[0]!.bankrupt).toBe(true);
+    expect(after.buildings[5]).toBeUndefined(); // buildings released with the stall
+    expect(after.rentBoosts[5]).toBeUndefined(); // Copa boost released too
+    expect(after.phase).toBe("GAME_OVER"); // only p1 left solvent
+    expect(after.winnerId).toBe(p1);
+  });
+
+  it("jail-fine you can't cover opens the debt phase; bankrupting runs the same cleanup", () => {
+    let owed: GameState | null = null;
+    for (let seed = 1; seed < 200 && !owed; seed++) {
+      let g = newGame(seed);
+      g = withPlayer(g, 0, { inJail: true, position: 10, jailTurns: g.tunables.jail.maxTurns - 1, money: 10 });
+      g = { ...g, ownership: { 5: p0 }, buildings: { 5: 1 } };
+      const out = reduce(g, { type: "ROLL_DICE" }).state;
+      if (out.phase === "AWAITING_DEBT_PAYMENT") owed = out;
+    }
+    expect(owed).not.toBeNull();
+    const bust = reduce(owed!, { type: "DECLARE_BANKRUPT", playerId: p0 }).state;
+    expect(bust.players[0]!.bankrupt).toBe(true);
+    expect(bust.buildings[5]).toBeUndefined();
+  });
+
+  it("rejects flying to the airport square itself (no self-loop)", () => {
+    const s: GameState = { ...newGame(1), phase: "AWAITING_AIRPORT" };
+    const after = reduce(s, { type: "SELECT_AIRPORT_TILE", squareId: 30 }).state; // square 30 = Aeroporto
+    expect(after.phase).toBe("AWAITING_AIRPORT"); // unchanged, waiting for a real pick
+    expect(after.players[0]!.position).not.toBe(30);
   });
 });
 
@@ -222,30 +469,87 @@ describe("round cap", () => {
     const state = reduce(s, { type: "END_TURN" }).state;
     expect(state.winnerId).toBe(p1);
   });
+
+  it("island monopoly: owning all four islands wins outright", () => {
+    let s: GameState = { ...newGame(1), phase: "TURN_END", activePlayerIndex: 0 };
+    s = { ...s, ownership: Object.fromEntries(ISLAND_IDS.map((id) => [id, p0])) };
+    const after = reduce(s, { type: "END_TURN" }).state;
+    expect(after.phase).toBe("GAME_OVER");
+    expect(after.winnerId).toBe(p0);
+  });
+
+  it("owning only three islands does not win", () => {
+    let s: GameState = { ...newGame(1), phase: "TURN_END", activePlayerIndex: 0 };
+    s = { ...s, ownership: Object.fromEntries(ISLAND_IDS.slice(0, 3).map((id) => [id, p0])) };
+    const after = reduce(s, { type: "END_TURN" }).state;
+    expect(after.phase).not.toBe("GAME_OVER");
+  });
+
+  it("forfeit removes a player without ending a 3-player game", () => {
+    const p2 = asPlayerId("p2");
+    const s3: GameState = {
+      ...createInitialState({
+        seed: 1,
+        players: [
+          { id: p0, name: "A", isAI: false },
+          { id: p1, name: "B", isAI: false },
+          { id: p2, name: "C", isAI: false },
+        ],
+      }),
+      phase: "AWAITING_ROLL",
+    };
+    const after = reduce(s3, { type: "FORFEIT", playerId: p1 }).state; // p1 isn't active
+    expect(after.players.find((p) => p.id === p1)!.bankrupt).toBe(true);
+    expect(after.phase).not.toBe("GAME_OVER"); // p0 and p2 remain
+  });
+
+  it("wealth goal: first to the target net worth wins outright", () => {
+    let s = newGame(1, { netWorthGoal: 5000 });
+    s = withPlayer(s, 0, { money: 6000 }); // net worth over the goal
+    s = { ...s, phase: "TURN_END", activePlayerIndex: 0 };
+    const after = reduce(s, { type: "END_TURN" }).state;
+    expect(after.phase).toBe("GAME_OVER");
+    expect(after.winnerId).toBe(p0);
+  });
+
+  it("wealth goal doesn't fire below the target", () => {
+    let s = newGame(1, { netWorthGoal: 5000 });
+    s = withPlayer(s, 0, { money: 4000 });
+    s = { ...s, phase: "TURN_END", activePlayerIndex: 0 };
+    const after = reduce(s, { type: "END_TURN" }).state;
+    expect(after.phase).not.toBe("GAME_OVER");
+  });
+
+  it("time up (END_ON_TIME) ends the game on net worth, richest wins", () => {
+    let s = newGame(1);
+    s = withPlayer(s, 0, { money: 500 });
+    s = withPlayer(s, 1, { money: 9000 });
+    const after = reduce(s, { type: "END_ON_TIME" }).state;
+    expect(after.phase).toBe("GAME_OVER");
+    expect(after.winnerId).toBe(p1); // richest solvent player
+  });
 });
 
 describe("jail", () => {
-  it("lands on GO_TO_JAIL and is jailed (no salary, turn ends)", () => {
-    // place player at 29 then craft a roll of 1 by seeding-independent path:
-    // directly set position so a forced single-die board makes 30 reachable.
-    let s = newGame(1, { diceCount: 1 });
-    // sit at 29 and roll one die until a seed produces a 1, landing on GO_TO_JAIL
-    // (which immediately relocates the pawn to jail, so we match on the event).
+  it("lands on the airport (square 30) and pauses to pick a destination", () => {
+    // square 30 is now Aeroporto: landing pauses at AWAITING_AIRPORT (no jail)
     let landed = false;
+    let s = newGame(1, { diceCount: 1 });
     for (let seed = 1; seed < 200 && !landed; seed++) {
       let g = newGame(seed, { diceCount: 1 });
       g = withPlayer(g, 0, { position: 29 });
       const out = reduce(g, { type: "ROLL_DICE" });
-      if (out.events.some((e) => e.type === "SENT_TO_JAIL")) {
+      if (out.state.phase === "AWAITING_AIRPORT") {
         s = out.state;
         landed = true;
       }
     }
     expect(landed).toBe(true);
-    expect(s.players[0]!.inJail).toBe(true);
-    expect(s.players[0]!.position).toBe(s.tunables.jail.jailSquareId);
-    expect(s.phase).toBe("AWAITING_ROLL"); // turn passed to the other player
-    expect(s.activePlayerIndex).toBe(1);
+    expect(s.phase).toBe("AWAITING_AIRPORT");
+    expect(s.players[0]!.inJail).toBe(false);
+    // flying to a chosen square resolves landing there
+    const after = reduce(s, { type: "SELECT_AIRPORT_TILE", squareId: 5 }).state;
+    expect(after.players[0]!.position).toBe(5);
   });
 
   it("three doubles in a row sends to jail", () => {
@@ -279,10 +583,10 @@ describe("jail", () => {
 
   it("pay fine leaves jail", () => {
     let s = newGame(1);
-    s = withPlayer(s, 0, { inJail: true, position: 10 });
+    s = withPlayer(s, 0, { inJail: true, position: 10, money: 20000 });
     const after = reduce(s, { type: "PAY_JAIL_FINE" }).state;
     expect(after.players[0]!.inJail).toBe(false);
-    expect(after.players[0]!.money).toBe(1500 - s.tunables.jail.fine);
+    expect(after.players[0]!.money).toBe(20000 - s.tunables.jail.fine);
     expect(after.phase).toBe("AWAITING_ROLL");
   });
 

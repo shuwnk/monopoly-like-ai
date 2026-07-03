@@ -63,4 +63,18 @@ describe("isLegalAction", () => {
     const s: GameState = { ...fresh(), phase: "GAME_OVER" };
     expect(isLegalAction(s, p0, "ROLL_DICE")).toBe(false);
   });
+
+  it("allows building only during the build-decision phase, on your turn", () => {
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_BUILD_DECISION" }, p0, "BUILD_HOUSE")).toBe(true);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_BUILD_DECISION" }, p0, "DECLINE_BUILD")).toBe(true);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_ROLL" }, p0, "BUILD_HOUSE")).toBe(false);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_BUILD_DECISION" }, p1, "BUILD_HOUSE")).toBe(false); // off-turn
+  });
+
+  it("gates the Copa and airport picks to their own phases", () => {
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_WORLD_CUP" }, p0, "SELECT_WORLD_CUP_TILE")).toBe(true);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_AIRPORT" }, p0, "SELECT_AIRPORT_TILE")).toBe(true);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_ROLL" }, p0, "SELECT_WORLD_CUP_TILE")).toBe(false);
+    expect(isLegalAction({ ...fresh(), phase: "AWAITING_WORLD_CUP" }, p1, "SELECT_WORLD_CUP_TILE")).toBe(false); // off-turn
+  });
 });

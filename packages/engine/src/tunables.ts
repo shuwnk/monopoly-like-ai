@@ -36,29 +36,41 @@ export interface GameTunables {
   // baseRent = max(rentFloor, floor(price * rentFraction))
   readonly rentFraction: number;
   readonly rentFloor: number;
-  // rent scales with how many properties the owner holds, standing in for the
-  // missing houses/hotels: factor = min(rentEscalationCap, 1 + step*(owned-1)),
-  // so a lone property never escalates. step 0 disables it (factor stays 1).
-  readonly rentEscalationStep: number;
-  readonly rentEscalationCap: number;
-  // force the game to end after this many rounds (laps); 0 disables the cap
+  // houses & hotels: building on a stall raises its rent. a stall's level runs
+  // 0 (bare) .. maxBuildLevel (hotel); houseRentMultipliers is the rent factor
+  // per level (index 0..maxBuildLevel) and must have maxBuildLevel+1 entries.
+  // build cost per level = round(price * buildCostFraction). building requires
+  // owning the whole district when requireMonopolyToBuild is set.
+  readonly maxBuildLevel: number;
+  readonly houseRentMultipliers: readonly number[];
+  readonly buildCostFraction: number;
+  readonly requireMonopolyToBuild: boolean;
+  // selling a property/house returns this fraction of what was paid (1 = full)
+  readonly sellFraction: number;
+  // Copa (World Cup): landing lets you multiply one of your properties' rent by this
+  readonly worldCupMultiplier: number;
+  // first player to reach this net worth wins instantly; 0 disables the goal
+  readonly netWorthGoal: number;
+  // force the game to end after this many rounds (laps); 0 disables the cap. In
+  // real play the host's countdown timer ends the game; the cap is a deterministic
+  // backstop (and the length the sim measures).
   readonly roundCap: number;
   readonly tiebreakMetric: TiebreakMetric;
 }
 
 export const DEFAULT_TUNABLES: GameTunables = {
-  // houses are cut, so rent does the heavy lifting: bigger flat rent (20% of
-  // price) plus a low GO salary keeps wealth from only ever rising, and the
-  // round cap guarantees a finish. escalation is held for a playtest pass.
-  startingMoney: 1200,
-  passGoSalary: 75,
-  taxAmount: 120,
+  // houses (graduated gate below) are the rent-scaling engine; base rent is 20%
+  // of price, and the round cap guarantees a finish. tuned "gentle": ~30% of
+  // games end by knockout, the rest on net worth at the cap (sim, 4p).
+  startingMoney: 100000,
+  passGoSalary: 7500,
+  taxAmount: 12000,
   boardSize: 40,
   diceCount: 2,
   diceSides: 6,
   jail: {
     jailSquareId: 10,
-    fine: 50,
+    fine: 5000,
     maxTurns: 3,
     releaseOnDoubles: true,
   },
@@ -69,19 +81,33 @@ export const DEFAULT_TUNABLES: GameTunables = {
     aborted: 1.0,
   },
   rentFraction: 0.2,
-  rentFloor: 8,
-  // escalation off by default; left for a playtest pass to decide its value
-  rentEscalationStep: 0,
-  rentEscalationCap: 4,
+  rentFloor: 800,
+  // 1-3 houses then a hotel; rent factor climbs 1x -> 5.5x
+  maxBuildLevel: 4,
+  houseRentMultipliers: [1, 2, 3, 4, 5.5],
+  // a house costs half the stall price. Building only happens when you land on a
+  // stall you own (one level per landing), so builds are naturally scarce; a
+  // lower cost keeps each one worth taking. Gentle: ~19% of games end by knockout,
+  // the rest on net worth at the cap (sim, 4p). Raise it to make building rarer.
+  buildCostFraction: 0.5,
+  // graduated gate (false): build one level per stall owned in a district, and
+  // completing it unlocks the hotel. A hard monopoly gate (true) never opened —
+  // districts of 3-6 stalls almost never complete without trading — so building
+  // sat unused. Graduated makes every buy also a build decision.
+  requireMonopolyToBuild: false,
+  sellFraction: 1.0, // full price back on a sale
+  worldCupMultiplier: 2,
+  // reach R$160k net worth (1.6x the 100k start) to win outright. sim: ~half of
+  // 4p games are won this way, the rest on the clock. 0 disables the wealth win.
+  netWorthGoal: 160000,
   roundCap: 30,
   tiebreakMetric: "NET_WORTH",
 };
 
-// rent multiplier from the owner's holdings: 1 property is flat, each extra
-// adds `step`, capped at `cap`. step <= 0 leaves rent unescalated.
-export function rentEscalationFactor(ownedCount: number, step: number, cap: number): number {
-  if (step <= 0 || ownedCount <= 1) return 1;
-  return Math.min(cap, 1 + step * (ownedCount - 1));
+// rent factor from a stall's build level, clamped into the multiplier table
+export function houseRentFactor(level: number, multipliers: readonly number[], maxLevel: number): number {
+  const l = Math.min(Math.max(level, 0), maxLevel);
+  return multipliers[l] ?? 1;
 }
 
 // the minigame says who won; this decides what that win is worth

@@ -23,6 +23,9 @@ const AI_SKILL = 0.6;
 export interface DebugPatch {
   player?: { id: PlayerId; money?: number; position?: number };
   phase?: GameState["phase"];
+  // merged over the current maps (for previewing ownership / building levels)
+  ownership?: Record<number, PlayerId>;
+  buildings?: Record<number, number>;
 }
 
 interface GameStore {
@@ -104,5 +107,7 @@ function applyDebugPatch(state: GameState, patch: DebugPatch): GameState {
     ...state,
     players,
     ...(patch.phase !== undefined ? { phase: patch.phase } : {}),
+    ...(patch.ownership ? { ownership: { ...state.ownership, ...patch.ownership } } : {}),
+    ...(patch.buildings ? { buildings: { ...state.buildings, ...patch.buildings } } : {}),
   };
 }

@@ -15,12 +15,28 @@ export function isLegalAction(state: GameState, playerId: PlayerId, action: Clie
   switch (action) {
     case "ROLL_DICE":
     case "PAY_JAIL_FINE":
-    case "DECLARE_BANKRUPT":
       return state.phase === "AWAITING_ROLL";
+    // give up either on your own turn or when facing a debt you can't/won't cover
+    case "DECLARE_BANKRUPT":
+      return state.phase === "AWAITING_ROLL" || state.phase === "AWAITING_DEBT_PAYMENT";
     case "BUY_PROPERTY":
     case "DECLINE_BUY":
       return state.phase === "AWAITING_BUY_DECISION";
     case "END_TURN":
       return state.phase === "TURN_END";
+    // building is offered only when you land on a stall you can improve (the
+    // reducer enforces ownership, cost, and the build-level gate on top of this)
+    case "BUILD_HOUSE":
+    case "DECLINE_BUILD":
+      return state.phase === "AWAITING_BUILD_DECISION";
+    // sell voluntarily on your turn, or to service a debt; auto-sell only in debt
+    case "SELL_TILE":
+      return state.phase === "AWAITING_ROLL" || state.phase === "AWAITING_DEBT_PAYMENT";
+    case "AUTO_SELL":
+      return state.phase === "AWAITING_DEBT_PAYMENT";
+    case "SELECT_WORLD_CUP_TILE":
+      return state.phase === "AWAITING_WORLD_CUP";
+    case "SELECT_AIRPORT_TILE":
+      return state.phase === "AWAITING_AIRPORT";
   }
 }

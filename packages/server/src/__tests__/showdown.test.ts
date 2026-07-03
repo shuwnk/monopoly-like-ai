@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState, type GameState } from "@party-monopoly/engine";
 import { DEFAULT_REFLEX_TAP_DUEL_CONFIG, type ReflexInput } from "@party-monopoly/minigame-harness";
 import { asMinigameId, asPlayerId } from "@party-monopoly/types";
-import { MISSING_TAP, adjudicateShowdown, sanitizeTap } from "../showdown.js";
+import { MISSING_TAP, adjudicateShowdown, resolveShowdown, sanitizeTap } from "../showdown.js";
 
 const payer = asPlayerId("p0");
 const owner = asPlayerId("p1");
@@ -60,6 +60,18 @@ describe("adjudicateShowdown", () => {
   it("throws when no showdown is pending", () => {
     const s: GameState = { ...showdownState(), pendingMinigame: null };
     expect(() => adjudicateShowdown(s, tapped(100), tapped(200), win, floor)).toThrow();
+  });
+});
+
+describe("resolveShowdown", () => {
+  it("returns the sanitized taps alongside the result for the reveal", () => {
+    // payer's impossible 5ms is demoted; the reveal must show that, not the raw 5
+    const res = resolveShowdown(showdownState(), tapped(5), tapped(400), win, floor);
+    expect(res.result).toMatchObject({ status: "COMPLETED", outcome: "P1_WIN" });
+    expect(res.payerId).toBe(payer);
+    expect(res.ownerId).toBe(owner);
+    expect(res.payerTap).toEqual({ reactionMs: null, falseStart: true });
+    expect(res.ownerTap).toEqual({ reactionMs: 400, falseStart: false });
   });
 });
 

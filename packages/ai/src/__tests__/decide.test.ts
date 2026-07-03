@@ -34,7 +34,7 @@ describe("decideAction", () => {
   it("buys an affordable cheap property", () => {
     let s = botTurn(game());
     // park on square 1 (cheap property) with plenty of cash
-    s = withPlayer(s, 1, { position: 1, money: 1500 });
+    s = withPlayer(s, 1, { position: 1, money: 20000 });
     s = { ...s, phase: "AWAITING_BUY_DECISION" };
     expect(decideAction(s, p1)).toEqual({ type: "BUY_PROPERTY" });
   });
@@ -55,7 +55,7 @@ describe("decideAction", () => {
 
   it("pays the jail fine after sitting a turn when it can afford it", () => {
     let s = botTurn(game());
-    s = withPlayer(s, 1, { inJail: true, jailTurns: 1, money: 1500 });
+    s = withPlayer(s, 1, { inJail: true, jailTurns: 1, money: 20000 });
     expect(decideAction(s, p1)).toEqual({ type: "PAY_JAIL_FINE" });
   });
 

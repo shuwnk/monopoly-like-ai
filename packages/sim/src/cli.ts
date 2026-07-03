@@ -3,7 +3,7 @@ import { runBatch, type BatchConfig } from "./simulate.js";
 
 // Headless balance runner. Examples:
 //   npm run sim --workspace @party-monopoly/sim
-//   npm run sim --workspace @party-monopoly/sim -- --games 500 --escalation 0.5
+//   npm run sim --workspace @party-monopoly/sim -- --games 500 --buildCost 0.75
 //   npm run sim --workspace @party-monopoly/sim -- --players 2 --rentFraction 0.24
 
 interface Args {
@@ -38,14 +38,16 @@ function parseArgs(argv: readonly string[]): Args {
   };
 
   const tunables: { -readonly [K in keyof GameTunables]?: GameTunables[K] } = {};
-  if (flags.has("escalation")) tunables.rentEscalationStep = Number(flags.get("escalation"));
-  if (flags.has("escalationCap")) tunables.rentEscalationCap = Number(flags.get("escalationCap"));
   if (flags.has("rentFraction")) tunables.rentFraction = Number(flags.get("rentFraction"));
   if (flags.has("rentFloor")) tunables.rentFloor = Number(flags.get("rentFloor"));
   if (flags.has("passGo")) tunables.passGoSalary = Number(flags.get("passGo"));
   if (flags.has("startMoney")) tunables.startingMoney = Number(flags.get("startMoney"));
   if (flags.has("tax")) tunables.taxAmount = Number(flags.get("tax"));
   if (flags.has("roundCap")) tunables.roundCap = Number(flags.get("roundCap"));
+  if (flags.has("maxBuildLevel")) tunables.maxBuildLevel = Number(flags.get("maxBuildLevel"));
+  if (flags.has("buildCost")) tunables.buildCostFraction = Number(flags.get("buildCost"));
+  if (flags.has("goal")) tunables.netWorthGoal = Number(flags.get("goal"));
+  if (flags.has("noMonopoly")) tunables.requireMonopolyToBuild = false;
 
   return {
     games: num("games", 200),
@@ -83,13 +85,18 @@ function main(): void {
 
   console.log(`\nendings`);
   console.log(`  elimination  ${pct(stats.eliminationRate).padStart(6)}  (${stats.byReason.ELIMINATION})`);
+  console.log(`  island win   ${pct(stats.byReason.ISLAND / stats.games).padStart(6)}  (${stats.byReason.ISLAND})`);
+  console.log(`  wealth goal  ${pct(stats.goalRate).padStart(6)}  (${stats.byReason.GOAL})`);
   console.log(`  round cap    ${pct(stats.capRate).padStart(6)}  (${stats.byReason.CAP})`);
   console.log(`  timeout      ${pct(stats.timeoutRate).padStart(6)}  (${stats.byReason.TIMEOUT})`);
   console.log(`  finished     ${pct(stats.finished / stats.games).padStart(6)}  (${stats.finished}/${stats.games})`);
 
   console.log(`\nturns to finish (finished games)`);
   console.log(`  min ${stats.turns.min}  ·  median ${one(stats.turns.median)}  ·  mean ${one(stats.turns.mean)}  ·  max ${stats.turns.max}`);
-  console.log(`\navg showdowns/game  ${one(stats.avgShowdowns)}\n`);
+  const w = stats.winnerNetWorth;
+  console.log(`\nwinner net worth   p50 ${Math.round(w.p50)}  ·  p75 ${Math.round(w.p75)}  ·  p90 ${Math.round(w.p90)}  ·  max ${Math.round(w.max)}`);
+  console.log(`\navg showdowns/game  ${one(stats.avgShowdowns)}`);
+  console.log(`avg builds/game     ${one(stats.avgBuilds)} (hotels ${one(stats.avgHotels)})\n`);
 }
 
 main();
