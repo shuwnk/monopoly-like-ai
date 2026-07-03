@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .vite/
 coverage/
+
+# Claude Code local, per-machine settings (permission allowlist) — not shared
+.claude/settings.local.json

@@ -50,7 +50,10 @@
       "Bash(node -e \"const p=require\\('./packages/engine/package.json'\\); console.log\\('main:',p.main,'| exports:',JSON.stringify\\(p.exports\\),'| types:',p.types\\)\")",
       "Bash(node -e \"const p=require\\('./apps/web/package.json'\\); console.log\\(JSON.stringify\\(p.scripts,null,0\\),'name:',p.name\\)\")",
       "Bash(node -e \"console.log\\('colyseus', require\\('colyseus/package.json'\\).version\\); try{console.log\\('ws-transport', require\\('@colyseus/ws-transport/package.json'\\).version\\)}catch\\(e\\){console.log\\('ws-transport: bundled'\\)}\")",
-      "Bash(docker version *)"
+      "Bash(docker version *)",
+      "Bash(git -C /Users/mhd/Projects/react/monopoly status)",
+      "Bash(git -C /Users/mhd/Projects/react/monopoly log --oneline -5)",
+      "Bash(grep -vE 'package-lock|\\\\.md$')"
     ]
   }
 }
