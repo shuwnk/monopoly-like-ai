@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npx --no-install tsc --noEmit && npx --no-install vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "echo \"(no web tests yet)\" && exit 0"
