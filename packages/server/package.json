@@ -15,11 +15,11 @@
     "@party-monopoly/engine": "*",
     "@party-monopoly/minigame-harness": "*",
     "@party-monopoly/types": "*",
-    "colyseus": "^0.16.0"
+    "colyseus": "^0.16.0",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.6.2",
     "vitest": "^2.1.2"
   }

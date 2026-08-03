@@ -11,6 +11,13 @@ export function Menu({
   onAirportPractice,
   onCopaPractice,
   onWinTest,
+  onFloorBrawl,
+  onFloorDrop,
+  onFloorDropOnline,
+  onBrawl,
+  onBomber,
+  onBarn,
+  onShop,
   onCreate,
   onJoin,
 }: {
@@ -20,6 +27,13 @@ export function Menu({
   onAirportPractice: () => void;
   onCopaPractice: () => void;
   onWinTest: () => void;
+  onFloorBrawl: () => void;
+  onFloorDrop: () => void;
+  onFloorDropOnline: () => void;
+  onBrawl: () => void;
+  onBomber: () => void;
+  onBarn: () => void;
+  onShop: () => void;
   onCreate: (durationSec: number, maxPlayers: number) => void;
   onJoin: (roomId: string) => void;
 }): JSX.Element {
@@ -73,6 +87,27 @@ export function Menu({
               </button>
               <button style={{ width: "100%" }} onClick={onWinTest}>
                 Win Conditions — trigger &amp; verify each win
+              </button>
+              <button style={{ width: "100%" }} onClick={onFloorBrawl}>
+                Floor Brawl — break-the-floor survival
+              </button>
+              <button style={{ width: "100%" }} onClick={onFloorDrop}>
+                Floor Drop — dodge the collapsing floor
+              </button>
+              <button style={{ width: "100%" }} onClick={onFloorDropOnline}>
+                🌐 Floor Drop ONLINE — real-time PvP vs friends (beta)
+              </button>
+              <button style={{ width: "100%" }} onClick={onBrawl}>
+                Brawl: Showdown — 3D arena brawler with Supers
+              </button>
+              <button style={{ width: "100%" }} onClick={onBomber}>
+                Bomber — Bomberman-style maze battle
+              </button>
+              <button style={{ width: "100%" }} onClick={onBarn}>
+                Barn Brawl — 3D arena shooter, most kills
+              </button>
+              <button style={{ width: "100%" }} onClick={onShop}>
+                🪙 Shop &amp; Loadout — spend coins, equip your gear
               </button>
             </div>
           </Card>

@@ -5,11 +5,17 @@ import type { ReflexInput } from "@party-monopoly/minigame-harness";
 import {
   asPlayerId,
   C2S,
+  FDClient,
+  FDServer,
   S2C,
   type ActionMessage,
   type CreateRoomOptions,
   type ErrorMessage,
+  type FDInput,
+  type FDOver,
+  type FDStart,
   type LobbyMessage,
+  type MinigameResult,
   type PlayerId,
   type ShowdownResultMessage,
   type ShowdownStartMessage,
@@ -17,11 +23,16 @@ import {
   type TapMessage,
 } from "@party-monopoly/types";
 import { MISSING_TAP, resolveShowdown } from "./showdown.js";
+import { FloorDropSim } from "./FloorDropSim.js";
 import { isLegalAction } from "./validate.js";
 
 const cfg = DEFAULT_REFLEX_TAP_DUEL_CONFIG;
 // how long after "go" we wait for both taps before filling the rest as misses
 const TAP_TIMEOUT_MS = 5000;
+// party round: authoritative Floor Drop tick rate (20 Hz, matching the standalone room)
+const PARTY_TICK_MS = 50;
+// how long the final-placement screen holds before the board resumes
+const PARTY_RESULT_MS = 3000;
 // how long we wait for a player's Copa / Aeroporto pick before auto-resolving it
 // with a sensible default, so an idle or dropped player can't stall the room
 const PICK_TIMEOUT_MS = 20000;
@@ -50,6 +61,13 @@ export class GameRoom extends Room {
   private durationSec = DEFAULT_DURATION_S;
   private endsAt: number | null = null;
   private started = false;
+  // party round: an authoritative Floor Drop sim runs inline while the board is parked in
+  // PARTY_ROUND. partySeat maps a sessionId -> fighter id for that round.
+  private partySim: FloorDropSim | null = null;
+  private partySeat = new Map<string, number>(); // sessionId -> fighter id
+  private partyPlayers: PlayerId[] = []; // fighter id order -> board playerId (for the ranking)
+  private partyOverTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingLeaves: PlayerId[] = []; // players who left mid-party; forfeited once it resolves
 
   override onCreate(options: CreateRoomOptions | undefined) {
     const d = Number(options?.durationSec);
@@ -59,6 +77,11 @@ export class GameRoom extends Room {
     this.onMessage(C2S.action, (client, msg: ActionMessage) => this.onAction(client, msg));
     this.onMessage(C2S.tap, (client, msg: TapMessage) => this.onTap(client, msg));
     this.onMessage(C2S.start, (client) => this.onStartRequest(client));
+    // movement input during a party round (reuses the Floor Drop wire protocol)
+    this.onMessage(FDClient.input, (client, msg: FDInput) => {
+      const id = this.partySeat.get(client.sessionId);
+      if (id !== undefined) this.partySim?.setInput(id, msg.dx, msg.dy);
+    });
   }
 
   override onJoin(client: Client) {
@@ -81,6 +104,19 @@ export class GameRoom extends Room {
   override async onLeave(client: Client, consented: boolean) {
     const seat = this.seats.get(client.sessionId);
     if (!seat) return;
+
+    // Leaving DURING a party round must not touch the board: a forfeit nulls
+    // pendingMinigame while the phase stays PARTY_ROUND, which would crash/stall the parked
+    // round. Instead hand the fighter to a bot (so the sim finishes) and queue the leave to be
+    // resolved once the round does. Party rounds are short, so no reconnection window here.
+    if (this.partySim) {
+      const fid = this.partySeat.get(client.sessionId);
+      if (fid !== undefined) this.partySim.makeBot(fid);
+      this.partySeat.delete(client.sessionId);
+      this.seats.delete(client.sessionId);
+      this.pendingLeaves.push(seat);
+      return;
+    }
 
     // still in the lobby: free the seat and refresh everyone (or close if empty)
     if (!this.started) {
@@ -137,10 +173,12 @@ export class GameRoom extends Room {
     if (this.goTimer) clearTimeout(this.goTimer);
     if (this.tapTimer) clearTimeout(this.tapTimer);
     if (this.gameTimer) clearTimeout(this.gameTimer);
+    if (this.partyOverTimer) clearTimeout(this.partyOverTimer);
     this.clearPickTimer();
     this.goTimer = null;
     this.tapTimer = null;
     this.gameTimer = null;
+    this.partyOverTimer = null;
   }
 
   private clearPickTimer() {
@@ -165,6 +203,9 @@ export class GameRoom extends Room {
     this.game = createInitialState({
       seed: Date.now(),
       players: seated.map((id, i) => ({ id, name: `Player ${i + 1}`, isAI: false })),
+      // online party rounds run Floor Drop only — it's the one minigame with a server-side
+      // authoritative sim. Barn Brawl / Bomberman have no server sim yet, so restrict the pick.
+      tunables: { partyGames: ["floordrop"] },
     });
     // start the host-authoritative countdown; at zero the richest player wins
     this.endsAt = Date.now() + this.durationSec * 1000;
@@ -227,6 +268,13 @@ export class GameRoom extends Room {
       this.startShowdown();
       return;
     }
+    // start a party round only on ENTERING the phase — never re-enter one already running
+    // (a stray re-entry would rebuild the sim / deref a cleared pendingMinigame)
+    if (this.game.phase === "PARTY_ROUND") {
+      this.clearPickTimer();
+      if (!this.partySim) this.startPartyRound();
+      return;
+    }
     this.schedulePickFallback();
   }
 
@@ -270,7 +318,7 @@ export class GameRoom extends Room {
   private startShowdown() {
     const game = this.game!;
     this.taps.clear();
-    const baseRent = game.pendingMinigame!.context.stakeData.baseRent;
+    const baseRent = game.pendingMinigame!.context.stakeData!.baseRent;
     this.broadcast(S2C.showdownStart, { baseRent } satisfies ShowdownStartMessage);
 
     const delay = cfg.minDelayMs + Math.random() * (cfg.maxDelayMs - cfg.minDelayMs);
@@ -314,6 +362,73 @@ export class GameRoom extends Room {
     } satisfies ShowdownResultMessage);
     this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result: res.result }).state;
     this.broadcastState();
+  }
+
+  // --- party round (inline Floor Drop: the board room hosts an authoritative sim while
+  // parked in PARTY_ROUND, then feeds the placement ranking back to the engine) ---
+
+  private startPartyRound() {
+    const game = this.game!;
+    const parts = game.pendingMinigame!.participants; // the seated solvent players
+    this.partyPlayers = parts.map((p) => p.playerId);
+    // fighter id i ↔ participant i; a connected client controls their own fighter, others are bots
+    const humans = parts.map((p, i) => {
+      const player = game.players.find((pl) => pl.id === p.playerId);
+      return { id: i, name: player?.name ?? `Player ${i + 1}` };
+    });
+    this.partySim = new FloorDropSim(humans, humans.length);
+    this.partySeat.clear();
+    const roster = this.partySim.fighters.map((f) => ({ id: f.id, name: f.name, color: f.color, bot: f.isBot }));
+    for (const c of this.clients) {
+      const pid = this.seats.get(c.sessionId);
+      const fid = pid ? this.partyPlayers.indexOf(pid) : -1;
+      if (fid >= 0) {
+        this.partySeat.set(c.sessionId, fid);
+        c.send(FDServer.start, { you: fid, players: roster } satisfies FDStart);
+      }
+    }
+    this.setSimulationInterval((dtMs) => this.partyTick(dtMs), PARTY_TICK_MS);
+  }
+
+  private partyTick(dtMs: number) {
+    const sim = this.partySim;
+    if (!sim) return;
+    sim.update(Math.min(0.05, dtMs / 1000));
+    this.broadcast(FDServer.snap, sim.snapshot());
+    if (sim.over) this.endPartyRound();
+  }
+
+  // sim finished: show the placement screen, then resume the board after a beat
+  private endPartyRound() {
+    const sim = this.partySim;
+    if (!sim) return;
+    this.setSimulationInterval(); // stop ticking (no callback = clear)
+    this.broadcast(FDServer.over, {
+      winner: sim.winner?.name ?? "",
+      places: sim.fighters.map((f) => [f.id, f.place === 0 ? 1 : f.place] as const),
+    } satisfies FDOver);
+    this.partyOverTimer = setTimeout(() => this.resolvePartyRound(), PARTY_RESULT_MS);
+  }
+
+  private resolvePartyRound() {
+    this.partyOverTimer = null;
+    const sim = this.partySim;
+    const game = this.game;
+    if (!sim || !game) return;
+    // per-fighter placements → best-to-worst ranking over the board playerIds
+    const ranking = [...sim.fighters]
+      .sort((a, b) => (a.place || 1) - (b.place || 1))
+      .map((f) => this.partyPlayers[f.id])
+      .filter((id): id is PlayerId => id !== undefined);
+    const result: MinigameResult = { minigameId: game.pendingMinigame!.minigameId, status: "COMPLETED", outcome: "P0_WIN", ranking };
+    this.partySim = null;
+    this.partySeat.clear();
+    this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result }).state;
+    this.broadcastState();
+    // now that the board has resumed, apply any leaves that happened during the round
+    const leaves = this.pendingLeaves;
+    this.pendingLeaves = [];
+    for (const s of leaves) this.forfeit(s);
   }
 
   // --- helpers ---

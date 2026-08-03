@@ -1,4 +1,4 @@
-import type { MinigameOutcome } from "@party-monopoly/types";
+import type { MinigameOutcome, PartyGame } from "@party-monopoly/types";
 
 // Balance knobs, kept as a typed config rather than scattered through the
 // reducer. Defaults get stamped into GameState at init, so balance is part of a
@@ -56,6 +56,14 @@ export interface GameTunables {
   // backstop (and the length the sim measures).
   readonly roundCap: number;
   readonly tiebreakMetric: TiebreakMetric;
+  // party rounds: every N completed laps, all solvent players play an FFA minigame and
+  // are paid by placement (a skill-based comeback lever). 0 disables party rounds.
+  readonly partyRoundEveryLaps: number;
+  // bank-funded prize for finishing 1st; each lower place gets a linear share, last gets 0
+  readonly partyRoundTopPrize: number;
+  // which games a party round may pick from — the host declares what it can actually run
+  // (hotseat runs all three; the server can only sim floordrop). Empty falls back to all.
+  readonly partyGames: readonly PartyGame[];
 }
 
 export const DEFAULT_TUNABLES: GameTunables = {
@@ -102,6 +110,14 @@ export const DEFAULT_TUNABLES: GameTunables = {
   netWorthGoal: 160000,
   roundCap: 30,
   tiebreakMetric: "NET_WORTH",
+  // a party round every 2 laps; 1st place earns ~1/3 of a lap salary, scaling down to nothing
+  // for last. Skill lets a trailing player claw back cash the wealth race won't give them.
+  // NOTE: bank-funded payouts inject cash, which speeds net-worth wins. Sim (60 games, 4p):
+  // party-off = 45 GOAL/15 CAP @24 rounds; this (2500) = 58/2 @21 rounds. Higher prizes
+  // compress harder (5000 → 60/0 @17). Tune the prize to taste against the elim/points split.
+  partyRoundEveryLaps: 2,
+  partyRoundTopPrize: 2500,
+  partyGames: ["floordrop", "bomberman", "barnbrawl"], // hotseat can run all three
 };
 
 // rent factor from a stall's build level, clamped into the multiplier table

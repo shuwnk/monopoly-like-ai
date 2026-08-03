@@ -14,6 +14,7 @@ export type GameEvent =
   | { readonly type: "AIRPORT_TRAVEL"; readonly playerId: PlayerId; readonly to: number }
   | { readonly type: "MINIGAME_REQUESTED"; readonly request: MinigameRequest }
   | { readonly type: "RENT_PAID"; readonly from: PlayerId; readonly to: PlayerId; readonly amount: number; readonly multiplier: number }
+  | { readonly type: "PARTY_ROUND_PAYOUT"; readonly playerId: PlayerId; readonly place: number; readonly amount: number }
   | { readonly type: "SENT_TO_JAIL"; readonly playerId: PlayerId }
   | { readonly type: "PLAYER_BANKRUPT"; readonly playerId: PlayerId; readonly releasedProperties: readonly number[] }
   | { readonly type: "TURN_ENDED"; readonly nextPlayerId: PlayerId }

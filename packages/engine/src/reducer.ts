@@ -1,8 +1,8 @@
-import { asMinigameId, type MinigameRequest, type MinigameResult, type PlayerId } from "@party-monopoly/types";
+import { asMinigameId, type MinigameRequest, type MinigameResult, type PartyGame, type PlayerId } from "@party-monopoly/types";
 import type { GameAction } from "./actions.js";
 import { ISLAND_IDS } from "./board.js";
 import type { GameEvent, ReducerResult } from "./events.js";
-import { rollDie } from "./rng.js";
+import { nextInt, rollDie } from "./rng.js";
 import type { GameState, PlayerState } from "./state.js";
 import { houseRentFactor, resolveRentMultiplier } from "./tunables.js";
 
@@ -41,7 +41,9 @@ export function reduce(state: GameState, action: GameAction): ReducerResult<Game
       return selectAirport(state, action.squareId);
 
     case "SUBMIT_MINIGAME_RESULT":
-      return resolveRentShowdown(state, action.result);
+      return state.phase === "PARTY_ROUND"
+        ? resolvePartyRound(state, action.result)
+        : resolveRentShowdown(state, action.result);
 
     case "END_TURN":
       return endTurn(state);
@@ -458,9 +460,9 @@ export function beginRentShowdown(
 }
 
 function resolveRentShowdown(state: GameState, result: MinigameResult): ReducerResult<GameState> {
-  if (state.phase !== "RENT_SHOWDOWN" || !state.pendingMinigame) return done(state);
+  if (state.phase !== "RENT_SHOWDOWN" || !state.pendingMinigame?.context.stakeData) return done(state);
 
-  const { stakeData } = state.pendingMinigame.context;
+  const stakeData = state.pendingMinigame.context.stakeData;
   const [payerP, ownerP] = state.pendingMinigame.participants;
   const payerIdx = state.players.findIndex((p) => p.id === payerP!.playerId);
   const ownerIdx = state.players.findIndex((p) => p.id === ownerP!.playerId);
@@ -535,10 +537,65 @@ function endTurn(state: GameState, events: readonly GameEvent[] = []): ReducerRe
   }
 
   const nextPlayer = state.players[next]!;
-  return {
-    state: { ...state, round, activePlayerIndex: next, doublesCount: 0, phase: "AWAITING_ROLL" },
-    events: [...events, { type: "TURN_ENDED", nextPlayerId: nextPlayer.id }],
+  const advanced: GameState = { ...state, round, activePlayerIndex: next, doublesCount: 0 };
+  const turnEnded: GameEvent = { type: "TURN_ENDED", nextPlayerId: nextPlayer.id };
+
+  // a party round fires when a lap just completed and the cadence lands — all solvent
+  // players play an FFA minigame before the next roll (resolvePartyRound resumes the turn)
+  const lapDone = round > state.round;
+  if (lapDone && state.tunables.partyRoundEveryLaps > 0 && round % state.tunables.partyRoundEveryLaps === 0 && solvent.length >= 2) {
+    return beginPartyRound(advanced, [...events, turnEnded]);
+  }
+  return { state: { ...advanced, phase: "AWAITING_ROLL" }, events: [...events, turnEnded] };
+}
+
+const PARTY_GAMES: readonly PartyGame[] = ["floordrop", "bomberman", "barnbrawl"];
+// each party game has 4 arena spawns, so a round seats at most the first 4 solvent
+// players. On a bigger board the rest sit this one out (v1 limit — rotation is a later lever).
+const PARTY_MAX_PLAYERS = 4;
+
+// Park the board and hand an FFA minigame request to the host. The game is picked from
+// state.rng so replays are deterministic. participants = the seated solvent players,
+// best-to-worst placement comes back in the result's `ranking`.
+function beginPartyRound(state: GameState, events: GameEvent[]): ReducerResult<GameState> {
+  const seated = state.players.filter((p) => !p.bankrupt).slice(0, PARTY_MAX_PLAYERS);
+  const games = state.tunables.partyGames.length > 0 ? state.tunables.partyGames : PARTY_GAMES;
+  const pick = nextInt(state.rng, 0, games.length - 1);
+  const game = games[pick.value]!;
+  const request: MinigameRequest = {
+    minigameId: asMinigameId(game),
+    participants: seated.map((p) => ({ playerId: p.id, isAI: p.isAI, ...(p.isAI ? { aiSkill: 0.5 } : {}) })),
+    context: { reason: "PARTY_ROUND", party: { game, topPrize: state.tunables.partyRoundTopPrize } },
+    config: {},
   };
+  return {
+    state: { ...state, rng: pick.next, phase: "PARTY_ROUND", pendingMinigame: request },
+    events: [...events, { type: "MINIGAME_REQUESTED", request }],
+  };
+}
+
+// Pay each player by their finishing place: 1st gets the full topPrize, last gets nothing,
+// linear in between. A player absent from the ranking is treated as last. Resumes the turn.
+function resolvePartyRound(state: GameState, result: MinigameResult): ReducerResult<GameState> {
+  if (state.phase !== "PARTY_ROUND" || !state.pendingMinigame?.context.party) return done(state);
+  const resumed: GameState = { ...state, pendingMinigame: null, phase: "AWAITING_ROLL" };
+  if (result.status === "ABORTED") return { state: resumed, events: [] };
+
+  const topPrize = state.pendingMinigame.context.party.topPrize;
+  const parts = state.pendingMinigame.participants;
+  const n = parts.length;
+  let paid = resumed;
+  const events: GameEvent[] = [];
+  for (const part of parts) {
+    const rank = result.ranking.indexOf(part.playerId);
+    const place = rank >= 0 ? rank + 1 : n; // unranked → last place
+    const amount = n > 1 ? Math.round((topPrize * (n - place)) / (n - 1)) : topPrize;
+    const idx = paid.players.findIndex((p) => p.id === part.playerId);
+    if (idx < 0 || paid.players[idx]!.bankrupt || amount <= 0) continue;
+    paid = setPlayer(paid, idx, { money: paid.players[idx]!.money + amount });
+    events.push({ type: "PARTY_ROUND_PAYOUT", playerId: part.playerId, place, amount });
+  }
+  return { state: paid, events };
 }
 
 // the host's countdown reached zero: end now, richest solvent player wins. Not a

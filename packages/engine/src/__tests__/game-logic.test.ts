@@ -10,8 +10,9 @@ const p0 = asPlayerId("p0");
 const p1 = asPlayerId("p1");
 
 // pin the economy so these rule tests don't move when default balance is retuned;
-// roundCap 0 keeps the cap out of the way unless a test opts in
-const TEST_TUNABLES = { startingMoney: 1500, passGoSalary: 200, taxAmount: 100, roundCap: 0 };
+// roundCap 0 keeps the cap out of the way, and partyRoundEveryLaps 0 keeps party
+// rounds from firing unless a test opts in
+const TEST_TUNABLES = { startingMoney: 1500, passGoSalary: 200, taxAmount: 100, roundCap: 0, partyRoundEveryLaps: 0 };
 
 function newGame(seed: number, tunables = {}): GameState {
   return createInitialState({
@@ -483,6 +484,97 @@ describe("round cap", () => {
     s = { ...s, ownership: Object.fromEntries(ISLAND_IDS.slice(0, 3).map((id) => [id, p0])) };
     const after = reduce(s, { type: "END_TURN" }).state;
     expect(after.phase).not.toBe("GAME_OVER");
+  });
+});
+
+describe("party round", () => {
+  // end p1's turn so the pointer wraps to p0 and the round increments to `toRound`
+  function endLapInto(toRound: number, tunables = {}): GameState {
+    const s: GameState = { ...newGame(1, tunables), round: toRound - 1, activePlayerIndex: 1, phase: "TURN_END" };
+    return reduce(s, { type: "END_TURN" }).state;
+  }
+
+  it("fires at the cadence: a party round parks the board with an FFA request", () => {
+    const s = endLapInto(2, { partyRoundEveryLaps: 2, roundCap: 0 });
+    expect(s.phase).toBe("PARTY_ROUND");
+    expect(s.pendingMinigame?.context.reason).toBe("PARTY_ROUND");
+    expect(s.pendingMinigame?.context.party).toBeDefined();
+    expect(s.pendingMinigame?.participants.map((p) => p.playerId)).toEqual([p0, p1]);
+  });
+
+  it("does not fire on off-cadence laps", () => {
+    const s = endLapInto(1, { partyRoundEveryLaps: 2, roundCap: 0 });
+    expect(s.phase).toBe("AWAITING_ROLL"); // round 1 isn't a multiple of 2
+  });
+
+  it("is disabled when partyRoundEveryLaps is 0", () => {
+    const s = endLapInto(2, { partyRoundEveryLaps: 0, roundCap: 0 });
+    expect(s.phase).toBe("AWAITING_ROLL");
+  });
+
+  it("pays by placement: 1st gets the full prize, last gets nothing, then resumes the turn", () => {
+    const started = endLapInto(2, { partyRoundEveryLaps: 2, roundCap: 0, partyRoundTopPrize: 15000 });
+    const before = started.players.map((p) => p.money);
+    const result: MinigameResult = {
+      minigameId: started.pendingMinigame!.minigameId,
+      status: "COMPLETED",
+      outcome: "P1_WIN",
+      ranking: [p1, p0], // Bob wins, Alice last
+    };
+    const { state, events } = reduce(started, { type: "SUBMIT_MINIGAME_RESULT", result });
+    expect(state.phase).toBe("AWAITING_ROLL"); // turn resumes for p0 (the wrapped-to player)
+    expect(state.activePlayerIndex).toBe(0);
+    expect(state.pendingMinigame).toBeNull();
+    expect(state.players[1]!.money).toBe(before[1]! + 15000); // 1st of 2 → full prize
+    expect(state.players[0]!.money).toBe(before[0]!); // last of 2 → 0
+    const payouts = events.filter((e) => e.type === "PARTY_ROUND_PAYOUT");
+    expect(payouts).toHaveLength(1); // only the winner got a nonzero payout
+  });
+
+  it("scales the prize linearly across a 4-player field", () => {
+    const four = createInitialState({
+      seed: 3,
+      players: [0, 1, 2, 3].map((i) => ({ id: asPlayerId(`p${i}`), name: `P${i}`, isAI: false })),
+      tunables: { ...TEST_TUNABLES, partyRoundEveryLaps: 2, partyRoundTopPrize: 15000 },
+    });
+    const started = reduce({ ...four, round: 1, activePlayerIndex: 3, phase: "TURN_END" }, { type: "END_TURN" }).state;
+    expect(started.phase).toBe("PARTY_ROUND");
+    const ids = [0, 1, 2, 3].map((i) => asPlayerId(`p${i}`));
+    const before = started.players.map((p) => p.money);
+    const result: MinigameResult = {
+      minigameId: started.pendingMinigame!.minigameId,
+      status: "COMPLETED",
+      outcome: "P0_WIN",
+      ranking: ids, // p0 1st … p3 last
+    };
+    const state = reduce(started, { type: "SUBMIT_MINIGAME_RESULT", result }).state;
+    // shares of 15000: (3/3, 2/3, 1/3, 0/3) = 15000, 10000, 5000, 0
+    expect(state.players[0]!.money).toBe(before[0]! + 15000);
+    expect(state.players[1]!.money).toBe(before[1]! + 10000);
+    expect(state.players[2]!.money).toBe(before[2]! + 5000);
+    expect(state.players[3]!.money).toBe(before[3]!);
+  });
+
+  it("an aborted party round pays nobody and still resumes the turn", () => {
+    const started = endLapInto(2, { partyRoundEveryLaps: 2, roundCap: 0 });
+    const before = started.players.map((p) => p.money);
+    const result: MinigameResult = {
+      minigameId: started.pendingMinigame!.minigameId,
+      status: "ABORTED",
+      outcome: "DRAW",
+      ranking: [],
+    };
+    const { state, events } = reduce(started, { type: "SUBMIT_MINIGAME_RESULT", result });
+    expect(state.phase).toBe("AWAITING_ROLL");
+    expect(state.players.map((p) => p.money)).toEqual(before);
+    expect(events.filter((e) => e.type === "PARTY_ROUND_PAYOUT")).toHaveLength(0);
+  });
+
+  it("picks the party game deterministically from the seed", () => {
+    const a = endLapInto(2, { partyRoundEveryLaps: 2, roundCap: 0 }).pendingMinigame?.context.party?.game;
+    const b = endLapInto(2, { partyRoundEveryLaps: 2, roundCap: 0 }).pendingMinigame?.context.party?.game;
+    expect(a).toBe(b); // same seed → same pick
+    expect(["floordrop", "bomberman", "barnbrawl"]).toContain(a);
   });
 
   it("forfeit removes a player without ending a 3-player game", () => {

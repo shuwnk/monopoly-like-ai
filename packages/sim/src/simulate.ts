@@ -105,6 +105,21 @@ export function simulateGame(config: SimConfig): GameResult {
       continue;
     }
 
+    // party round: all-AI sim can't play the game, so synthesize a random placement
+    // (Fisher–Yates off the seeded reflex stream) and feed the ranking back
+    if (state.phase === "PARTY_ROUND" && state.pendingMinigame) {
+      const order = state.pendingMinigame.participants.map((p) => p.playerId);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(reflexRandom() * (i + 1));
+        [order[i], order[j]] = [order[j]!, order[i]!];
+      }
+      state = reduce(state, {
+        type: "SUBMIT_MINIGAME_RESULT",
+        result: { minigameId: state.pendingMinigame.minigameId, status: "COMPLETED", outcome: "P0_WIN", ranking: order },
+      }).state;
+      continue;
+    }
+
     const active = state.players[state.activePlayerIndex];
     if (!active) break;
     const action = decideAction(state, active.id);

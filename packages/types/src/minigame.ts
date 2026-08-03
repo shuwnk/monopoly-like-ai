@@ -14,8 +14,11 @@ export interface MinigameParticipant {
   readonly aiSkill?: number;
 }
 
-// MVP only uses RENT_SHOWDOWN
-export type MinigameReason = "RENT_SHOWDOWN";
+// RENT_SHOWDOWN = a 1v1 rent duel; PARTY_ROUND = an all-players FFA at a lap boundary
+export type MinigameReason = "RENT_SHOWDOWN" | "PARTY_ROUND";
+
+// which party game the board picked for this round (chosen deterministically by the engine)
+export type PartyGame = "floordrop" | "bomberman" | "barnbrawl";
 
 export interface RentStakeData {
   // flat rent before the multiplier
@@ -23,9 +26,18 @@ export interface RentStakeData {
   readonly propertyId: number;
 }
 
+export interface PartyStakeData {
+  readonly game: PartyGame;
+  // bank-funded prize for 1st place; lower placements get a linear share, last gets nothing
+  readonly topPrize: number;
+}
+
 export interface MinigameContext {
   readonly reason: MinigameReason;
-  readonly stakeData: RentStakeData;
+  // present when reason === "RENT_SHOWDOWN"
+  readonly stakeData?: RentStakeData;
+  // present when reason === "PARTY_ROUND"
+  readonly party?: PartyStakeData;
 }
 
 export interface MinigameRequest {

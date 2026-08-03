@@ -13,6 +13,8 @@ export type TurnPhase =
   // owe more than you hold: sell assets to cover the debt, or go bankrupt
   | "AWAITING_DEBT_PAYMENT"
   | "RENT_SHOWDOWN"
+  // every N laps: all solvent players drop into an FFA party minigame, paid by placement
+  | "PARTY_ROUND"
   // Copa: pick one of your properties to boost its rent; Aeroporto: pick where to fly
   | "AWAITING_WORLD_CUP"
   | "AWAITING_AIRPORT"

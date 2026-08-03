@@ -2,10 +2,15 @@ import { Client, type Room } from "colyseus.js";
 import type { GameState } from "@party-monopoly/engine";
 import {
   C2S,
+  FDClient,
+  FDServer,
   S2C,
   type ActionMessage,
   type ClientActionType,
   type ErrorMessage,
+  type FDOver,
+  type FDSnapshot,
+  type FDStart,
   type LobbyMessage,
   type PlayerId,
   type ShowdownResultMessage,
@@ -18,6 +23,9 @@ import {
 // VITE_SERVER_URL=wss://party-monopoly.example.com ; falls back to local dev.
 const DEFAULT_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "ws://localhost:2567";
 const ROOM = "game";
+// the reconnection token is stashed in sessionStorage so a browser REFRESH (which destroys
+// the in-memory client) can still rejoin within the server's reconnect window
+const TOKEN_KEY = "pm-reconnect";
 
 export interface OnlineHandlers {
   onState: (state: GameState, you: PlayerId, endsAt?: number) => void;
@@ -25,6 +33,10 @@ export interface OnlineHandlers {
   onShowdownStart: (baseRent: number) => void;
   onShowdownGo: () => void;
   onShowdownResult: (result: ShowdownResultMessage) => void;
+  // party round (inline Floor Drop): start = your fighter + roster, snap = 20Hz world, over = places
+  onPartyStart: (msg: FDStart) => void;
+  onPartySnap: (snap: FDSnapshot) => void;
+  onPartyOver: (over: FDOver) => void;
   onError: (message: string) => void;
   onLeave: (code: number) => void;
 }
@@ -45,12 +57,36 @@ export class OnlineClient {
     return this.token !== null;
   }
 
+  // is there a stashed session a page reload could try to resume?
+  static hasStoredSession(): boolean {
+    try {
+      return !!sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      return false;
+    }
+  }
+  static clearStoredSession(): void {
+    try {
+      sessionStorage.removeItem(TOKEN_KEY);
+    } catch {
+      /* sessionStorage unavailable — nothing to clear */
+    }
+  }
+  private setToken(t: string): void {
+    this.token = t;
+    try {
+      sessionStorage.setItem(TOKEN_KEY, t);
+    } catch {
+      /* sessionStorage unavailable — in-memory reconnect still works within the session */
+    }
+  }
+
   async create(h: OnlineHandlers, durationSec?: number, maxPlayers?: number): Promise<string> {
     const opts: Record<string, number> = {};
     if (durationSec !== undefined) opts.durationSec = durationSec;
     if (maxPlayers !== undefined) opts.maxPlayers = maxPlayers;
     this.room = await this.client.create(ROOM, opts);
-    this.token = this.room.reconnectionToken;
+    this.setToken(this.room.reconnectionToken);
     this.wire(h);
     return this.room.roomId;
   }
@@ -61,14 +97,28 @@ export class OnlineClient {
 
   async join(roomId: string, h: OnlineHandlers): Promise<void> {
     this.room = await this.client.joinById(roomId, {});
-    this.token = this.room.reconnectionToken;
+    this.setToken(this.room.reconnectionToken);
     this.wire(h);
   }
 
   async reconnect(h: OnlineHandlers): Promise<void> {
     if (!this.token) throw new Error("no reconnection token");
     this.room = await this.client.reconnect(this.token);
-    this.token = this.room.reconnectionToken;
+    this.setToken(this.room.reconnectionToken);
+    this.wire(h);
+  }
+
+  // resume a session after a page reload, using the token stashed in sessionStorage
+  async restore(h: OnlineHandlers): Promise<void> {
+    let stored: string | null = null;
+    try {
+      stored = sessionStorage.getItem(TOKEN_KEY);
+    } catch {
+      stored = null;
+    }
+    if (!stored) throw new Error("no stored session");
+    this.room = await this.client.reconnect(stored);
+    this.setToken(this.room.reconnectionToken);
     this.wire(h);
   }
 
@@ -81,10 +131,15 @@ export class OnlineClient {
     this.room?.send(C2S.tap, { reactionMs, falseStart } satisfies TapMessage);
   }
 
+  sendPartyInput(dx: number, dy: number): void {
+    this.room?.send(FDClient.input, { dx, dy });
+  }
+
   leave(): void {
     void this.room?.leave();
     this.room = null;
     this.token = null;
+    OnlineClient.clearStoredSession();
   }
 
   private wire(h: OnlineHandlers): void {
@@ -94,6 +149,9 @@ export class OnlineClient {
     room.onMessage(S2C.showdownStart, (m: ShowdownStartMessage) => h.onShowdownStart(m.baseRent));
     room.onMessage(S2C.showdownGo, () => h.onShowdownGo());
     room.onMessage(S2C.showdownResult, (m: ShowdownResultMessage) => h.onShowdownResult(m));
+    room.onMessage(FDServer.start, (m: FDStart) => h.onPartyStart(m));
+    room.onMessage(FDServer.snap, (m: FDSnapshot) => h.onPartySnap(m));
+    room.onMessage(FDServer.over, (m: FDOver) => h.onPartyOver(m));
     room.onMessage(S2C.error, (m: ErrorMessage) => h.onError(m.message));
     room.onError((code, message) => h.onError(message ?? `error ${code}`));
     room.onLeave((code) => h.onLeave(code));

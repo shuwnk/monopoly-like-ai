@@ -4,10 +4,11 @@ import { CURRENCY } from "../theme.js";
 import { IsoBoard } from "./IsoBoard.js";
 import { Hud } from "./Hud.js";
 import { OnlineReflexDuel } from "./OnlineReflexDuel.js";
+import { OnlinePartyRound } from "./OnlinePartyRound.js";
 import { BuildPrompt, DebtPanel, airportTargets, copaTargets, sellTargets } from "./TurnChoices.js";
 
 export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
-  const { status, roomId, state, you, error, showdown, endsAt, lobby, startGame, sendAction, sendTap, dismissShowdown, disconnect } =
+  const { status, roomId, state, you, error, showdown, endsAt, lobby, party, startGame, sendAction, sendTap, dismissShowdown, disconnect } =
     useOnlineStore();
   const [sellMode, setSellMode] = useState(false);
 
@@ -15,6 +16,10 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
     disconnect();
     onLeave();
   }
+
+  // a party round takes over the screen: everyone plays the server-run FFA minigame, then
+  // placement pays out and the board resumes (the server auto-submits the result)
+  if (party) return <OnlinePartyRound />;
 
   if (!state) {
     return (

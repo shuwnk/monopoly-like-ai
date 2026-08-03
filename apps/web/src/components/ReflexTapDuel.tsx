@@ -181,7 +181,7 @@ export function ReflexTapDuel({
   return (
     <section style={{ margin: "16px 0", padding: 14, border: "1px solid var(--neon-a)", borderRadius: "var(--radius)", background: "var(--neon-bg)", color: "#e9ecf4", boxShadow: "0 0 26px rgba(224,57,143,0.35)" }}>
       <div style={{ marginBottom: 8 }}>
-        <strong>Rent Showdown — Reflex Tap Duel.</strong> Base rent R${request.context.stakeData.baseRent}.{" "}
+        <strong>Rent Showdown — Reflex Tap Duel.</strong> Base rent R${request.context.stakeData!.baseRent}.{" "}
         {aiSeat === undefined
           ? <>{payerName} taps <kbd>A</kbd>, {ownerName} taps <kbd>L</kbd>.</>
           : <>You tap <kbd>{aiSeat === 0 ? "L" : "A"}</kbd>, the bot reacts on its own.</>}

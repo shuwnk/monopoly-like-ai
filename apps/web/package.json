@@ -15,9 +15,11 @@
     "@party-monopoly/engine": "*",
     "@party-monopoly/minigame-harness": "*",
     "@party-monopoly/types": "*",
+    "@types/three": "^0.169.0",
     "colyseus.js": "^0.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "three": "^0.169.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

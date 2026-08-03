@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { decideAction } from "@party-monopoly/ai";
 import { useGameStore } from "../store/gameStore.js";
-import { toRecord } from "../telemetry/duel.js";
 import { Board } from "./Board.js";
 import { IsoBoard } from "./IsoBoard.js";
 import { DebugPanel } from "./DebugPanel.js";
 import { Hud } from "./Hud.js";
-import { ReflexTapDuel } from "./ReflexTapDuel.js";
+import { ArenaDuel } from "./ArenaDuel.js";
+import { PartyRound } from "./PartyRound.js";
 import { BuildPrompt, DebtPanel, airportTargets, copaTargets, sellTargets } from "./TurnChoices.js";
 
 // Hotseat shell: renders the mirrored snapshot and the buttons that dispatch
@@ -17,7 +17,6 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
   const dispatch = useGameStore((s) => s.dispatch);
   const newGame = useGameStore((s) => s.newGame);
   const newAIGame = useGameStore((s) => s.newAIGame);
-  const logDuel = useGameStore((s) => s.logDuel);
   const aiPlayerId = useGameStore((s) => s.aiPlayerId);
   const aiSkill = useGameStore((s) => s.aiSkill);
 
@@ -77,6 +76,19 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
         : (debtPick || sellPick) && active
           ? { pickTiles: sellTargets(state, active.id), onPickTile: (id: number) => dispatch({ type: "SELL_TILE", squareId: id }) }
           : null;
+
+  // a party round takes over the whole screen: all players drop into the FFA minigame the
+  // engine picked, then placement pays out and the board resumes on the next roll
+  if (state.phase === "PARTY_ROUND" && state.pendingMinigame) {
+    return (
+      <PartyRound
+        key={`party-${state.round}`}
+        request={state.pendingMinigame}
+        onResult={(r) => dispatch({ type: "SUBMIT_MINIGAME_RESULT", result: r })}
+        nameOf={(id) => state.players.find((p) => p.id === id)?.name ?? String(id)}
+      />
+    );
+  }
 
   return (
     <main style={{ minHeight: "100vh", padding: 24, maxWidth: 1440, margin: "0 auto" }}>
@@ -158,11 +170,10 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
       )}
 
       {state.phase === "RENT_SHOWDOWN" && state.pendingMinigame && (
-        <ReflexTapDuel
-          key={state.pendingMinigame.context.stakeData.propertyId + "-" + state.activePlayerIndex}
+        <ArenaDuel
+          key={state.pendingMinigame.context.stakeData!.propertyId + "-" + state.activePlayerIndex}
           request={state.pendingMinigame}
           onResult={(r) => dispatch({ type: "SUBMIT_MINIGAME_RESULT", result: r })}
-          onMetrics={(r, inputs, meta) => logDuel(toRecord(r, inputs, { preGoDelayMs: meta.preGoDelayMs, devices: meta.devices }))}
           {...(aiSeat !== undefined ? { aiSeat, aiSkill } : {})}
         />
       )}
