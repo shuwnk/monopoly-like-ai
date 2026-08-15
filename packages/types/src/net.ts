@@ -10,6 +10,11 @@ export const C2S = {
   action: "action",
   tap: "tap",
   start: "start", // host asks to start the game before the room is full
+  // "I'm listening now" — sent once the client has its handlers attached, so the
+  // server re-sends the lobby (or the live state). Without it a client can miss
+  // the message its own join triggered, since that is sent before the join
+  // promise resolves and the handlers exist.
+  sync: "sync",
 } as const;
 
 // server -> client message names
@@ -57,8 +62,15 @@ export interface TapMessage {
   readonly falseStart: boolean;
 }
 
+// who a client says it is. Both creating and joining carry it; the server
+// sanitizes the name and falls back to "Player N" if it's empty or missing.
+export interface PlayerIdentity {
+  readonly name?: string;
+  readonly avatar?: string; // mascot id, for the lobby roster
+}
+
 // options the room creator passes to set up the match
-export interface CreateRoomOptions {
+export interface CreateRoomOptions extends PlayerIdentity {
   // wall-clock game length in seconds; the server ends on net worth at zero
   readonly durationSec: number;
   // how many players the room seats (2..10); the game starts when it fills, or
@@ -66,11 +78,21 @@ export interface CreateRoomOptions {
   readonly maxPlayers: number;
 }
 
+// one seated player in the pre-game lobby
+export interface LobbySeat {
+  readonly id: PlayerId;
+  readonly name: string;
+  readonly avatar: string;
+}
+
 // pre-game lobby status, sent to each client as players join
 export interface LobbyMessage {
   readonly joined: number;
   readonly capacity: number;
   readonly host: boolean; // is THIS client the host (can start early)?
+  readonly you: PlayerId; // which seat this recipient holds
+  readonly hostId: PlayerId; // whose seat may start the game early
+  readonly players: readonly LobbySeat[]; // everyone in the room, seat order
 }
 
 // State is generic so this package needn't depend on the engine (which depends
@@ -83,9 +105,13 @@ export interface StateMessage<TState> {
   readonly endsAt?: number;
 }
 
-// red — get ready. carries the flat rent so the client can show the stakes.
+// red — get ready. carries the flat rent so the client can show the stakes, and
+// the two duellists so everyone else knows to watch rather than tap (only these
+// two may send a tap; the rest of the table spectates).
 export interface ShowdownStartMessage {
   readonly baseRent: number;
+  readonly payerId: PlayerId;
+  readonly ownerId: PlayerId;
 }
 
 // green now; start measuring reaction from the moment this arrives.

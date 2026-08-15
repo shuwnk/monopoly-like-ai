@@ -13,6 +13,7 @@ import {
   type FDStart,
   type LobbyMessage,
   type PlayerId,
+  type PlayerIdentity,
   type ShowdownResultMessage,
   type ShowdownStartMessage,
   type StateMessage,
@@ -30,7 +31,7 @@ const TOKEN_KEY = "pm-reconnect";
 export interface OnlineHandlers {
   onState: (state: GameState, you: PlayerId, endsAt?: number) => void;
   onLobby: (lobby: LobbyMessage) => void;
-  onShowdownStart: (baseRent: number) => void;
+  onShowdownStart: (msg: ShowdownStartMessage) => void;
   onShowdownGo: () => void;
   onShowdownResult: (result: ShowdownResultMessage) => void;
   // party round (inline Floor Drop): start = your fighter + roster, snap = 20Hz world, over = places
@@ -81,8 +82,8 @@ export class OnlineClient {
     }
   }
 
-  async create(h: OnlineHandlers, durationSec?: number, maxPlayers?: number): Promise<string> {
-    const opts: Record<string, number> = {};
+  async create(h: OnlineHandlers, durationSec: number | undefined, maxPlayers: number | undefined, me: PlayerIdentity): Promise<string> {
+    const opts: Record<string, number | string> = { ...identity(me) };
     if (durationSec !== undefined) opts.durationSec = durationSec;
     if (maxPlayers !== undefined) opts.maxPlayers = maxPlayers;
     this.room = await this.client.create(ROOM, opts);
@@ -95,8 +96,8 @@ export class OnlineClient {
     this.room?.send(C2S.start, {});
   }
 
-  async join(roomId: string, h: OnlineHandlers): Promise<void> {
-    this.room = await this.client.joinById(roomId, {});
+  async join(roomId: string, h: OnlineHandlers, me: PlayerIdentity): Promise<void> {
+    this.room = await this.client.joinById(roomId, identity(me));
     this.setToken(this.room.reconnectionToken);
     this.wire(h);
   }
@@ -146,7 +147,7 @@ export class OnlineClient {
     const room = this.room!;
     room.onMessage(S2C.state, (m: StateMessage<GameState>) => h.onState(m.state, m.you, m.endsAt));
     room.onMessage(S2C.lobby, (m: LobbyMessage) => h.onLobby(m));
-    room.onMessage(S2C.showdownStart, (m: ShowdownStartMessage) => h.onShowdownStart(m.baseRent));
+    room.onMessage(S2C.showdownStart, (m: ShowdownStartMessage) => h.onShowdownStart(m));
     room.onMessage(S2C.showdownGo, () => h.onShowdownGo());
     room.onMessage(S2C.showdownResult, (m: ShowdownResultMessage) => h.onShowdownResult(m));
     room.onMessage(FDServer.start, (m: FDStart) => h.onPartyStart(m));
@@ -155,5 +156,16 @@ export class OnlineClient {
     room.onMessage(S2C.error, (m: ErrorMessage) => h.onError(m.message));
     room.onError((code, message) => h.onError(message ?? `error ${code}`));
     room.onLeave((code) => h.onLeave(code));
+    // now that we're listening, ask for whatever we should be looking at — the
+    // lobby (or state) the server sent while our own join was still in flight
+    room.send(C2S.sync, {});
   }
+}
+
+// only send the fields the player actually set; the server names them otherwise
+function identity(me: PlayerIdentity): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (me.name) out.name = me.name;
+  if (me.avatar) out.avatar = me.avatar;
+  return out;
 }

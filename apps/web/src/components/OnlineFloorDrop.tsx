@@ -4,6 +4,7 @@ import { FD_GRID, FDClient, FDServer, type FDLobby, type FDOver, type FDRosterEn
 import { AVATARS, avatarById, avatarRoster, type Avatar } from "../game/avatars.js";
 import { useProfile } from "../store/profile.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
+import { TouchStick } from "./TouchStick.js";
 
 // Real-time PvP Floor Drop client. The server owns the sim; this just sends the
 // movement vector and renders the snapshots it broadcasts (~20Hz) with smoothing.
@@ -205,8 +206,17 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
           <>
             <div ref={aliveRef} style={{ position: "absolute", top: 12, left: 16, color: "#fff", fontWeight: 800, fontSize: 18, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Alive: 0</div>
             <div ref={timeRef} style={{ position: "absolute", top: 14, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.75)", fontWeight: 700, fontSize: 15, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>0s</div>
-            <div style={{ position: "absolute", top: 14, right: 16, color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>WASD / arrows — survive</div>
+            <div style={{ position: "absolute", top: 14, right: 16, color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>WASD / arrows — or drag on a phone</div>
           </>
+        )}
+
+        {net === "playing" && (
+          <TouchStick
+            onChange={(dx, dy) => {
+              sentRef.current = { dx, dy };
+              roomRef.current?.send(FDClient.input, { dx, dy });
+            }}
+          />
         )}
 
         {net !== "playing" && (

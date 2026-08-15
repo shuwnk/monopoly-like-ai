@@ -1,7 +1,11 @@
 import { useState, type ReactNode } from "react";
+import type { LobbyMessage } from "@party-monopoly/types";
 import { useOnlineStore } from "../store/onlineStore.js";
 import { CURRENCY } from "../theme.js";
+import { avatarById } from "../game/avatars.js";
+import { AvatarThumb } from "./AvatarThumb.js";
 import { IsoBoard } from "./IsoBoard.js";
+import { HowToWin } from "./HowToWin.js";
 import { Hud } from "./Hud.js";
 import { OnlineReflexDuel } from "./OnlineReflexDuel.js";
 import { OnlinePartyRound } from "./OnlinePartyRound.js";
@@ -11,6 +15,7 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
   const { status, roomId, state, you, error, showdown, endsAt, lobby, party, startGame, sendAction, sendTap, dismissShowdown, disconnect } =
     useOnlineStore();
   const [sellMode, setSellMode] = useState(false);
+  const [rules, setRules] = useState(false);
 
   function leave(): void {
     disconnect();
@@ -25,27 +30,8 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
     return (
       <Frame onLeave={leave}>
         <Status status={status} roomId={roomId} error={error} />
-        {lobby && (
-          <section style={{ margin: "16px 0", padding: 16, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
-              {lobby.joined} / {lobby.capacity} players joined
-            </div>
-            {roomId && (
-              <div style={{ marginTop: 6, fontSize: 14 }}>
-                Share this code so friends can join: <strong style={{ fontFamily: "monospace", fontSize: 16 }}>{roomId}</strong>
-              </div>
-            )}
-            <div style={{ marginTop: 12 }}>
-              {lobby.host ? (
-                <button className="primary" disabled={lobby.joined < 2} onClick={startGame}>
-                  Start game ({lobby.joined} in)
-                </button>
-              ) : (
-                <span style={{ color: "var(--muted)" }}>Waiting for the host to start…</span>
-              )}
-            </div>
-          </section>
-        )}
+        {lobby && <Lobby lobby={lobby} roomId={roomId} onStart={startGame} onRules={() => setRules(true)} />}
+        {rules && <HowToWin onClose={() => setRules(false)} />}
       </Frame>
     );
   }
@@ -76,7 +62,8 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
           : null;
 
   return (
-    <Frame onLeave={leave}>
+    <Frame onLeave={leave} onRules={() => setRules(true)}>
+      {rules && <HowToWin tunables={state.tunables} onClose={() => setRules(false)} />}
       <Status status={status} roomId={roomId} error={error} />
 
       {over ? (
@@ -172,6 +159,8 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
           key={"sd-" + showdown.id}
           signal={showdown}
           you={you}
+          payerName={state.players.find((p) => p.id === showdown.payerId)?.name ?? "Payer"}
+          ownerName={state.players.find((p) => p.id === showdown.ownerId)?.name ?? "Owner"}
           onTap={sendTap}
           onRevealDone={dismissShowdown}
         />
@@ -184,12 +173,124 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
   );
 }
 
-function Frame({ children, onLeave }: { children: ReactNode; onLeave: () => void }): JSX.Element {
+// Pre-game room: who's here, how to get the rest of your friends in, and (for the
+// host) the start button. Empty seats are drawn too so the wait reads as progress.
+function Lobby({
+  lobby,
+  roomId,
+  onStart,
+  onRules,
+}: {
+  lobby: LobbyMessage;
+  roomId: string | null;
+  onStart: () => void;
+  onRules: () => void;
+}): JSX.Element {
+  const [copied, setCopied] = useState<"link" | "code" | null>(null);
+  const link = roomId ? `${window.location.origin}${window.location.pathname}?room=${roomId}` : "";
+  const empty = Math.max(0, lobby.capacity - lobby.players.length);
+
+  function copy(what: "link" | "code", text: string): void {
+    void navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(what);
+        window.setTimeout(() => setCopied(null), 1600);
+      },
+      () => setCopied(null), // clipboard blocked (insecure context) — the text is on screen anyway
+    );
+  }
+
+  return (
+    <section style={{ margin: "16px 0", padding: 16, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ fontSize: 20, fontWeight: 800 }}>
+          {lobby.joined} / {lobby.capacity} players in
+        </div>
+        <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={onRules}>
+          How to win
+        </button>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "14px 0" }}>
+        {lobby.players.map((p) => (
+          <div
+            key={p.id}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 2,
+              width: 84,
+              padding: "8px 4px",
+              borderRadius: 10,
+              background: "var(--panel)",
+              border: `2px solid ${p.id === lobby.you ? "var(--accent)" : "transparent"}`,
+            }}
+          >
+            <AvatarThumb av={avatarById(p.avatar)} size={48} />
+            <span style={{ fontSize: 12, fontWeight: 800, maxWidth: 76, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {p.name}
+            </span>
+            <span style={{ fontSize: 10, color: "var(--muted)", height: 12 }}>
+              {p.id === lobby.hostId ? "host" : p.id === lobby.you ? "you" : ""}
+            </span>
+          </div>
+        ))}
+        {Array.from({ length: empty }, (_, i) => (
+          <div
+            key={`empty-${i}`}
+            style={{
+              display: "grid",
+              placeItems: "center",
+              width: 84,
+              height: 92,
+              borderRadius: 10,
+              border: "2px dashed var(--border)",
+              color: "var(--muted)",
+              fontSize: 11,
+            }}
+          >
+            waiting…
+          </div>
+        ))}
+      </div>
+
+      {roomId && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14 }}>
+          <span>
+            Room code <strong style={{ fontFamily: "monospace", fontSize: 16 }}>{roomId}</strong>
+          </span>
+          <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => copy("code", roomId)}>
+            {copied === "code" ? "Copied ✓" : "Copy code"}
+          </button>
+          <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => copy("link", link)}>
+            {copied === "link" ? "Copied ✓" : "Copy invite link"}
+          </button>
+        </div>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        {lobby.host ? (
+          <button className="primary" disabled={lobby.joined < 2} onClick={onStart}>
+            {lobby.joined < 2 ? "Waiting for one more…" : `Start game (${lobby.joined} in)`}
+          </button>
+        ) : (
+          <span style={{ color: "var(--muted)" }}>Waiting for the host to start…</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Frame({ children, onLeave, onRules }: { children: ReactNode; onLeave: () => void; onRules?: () => void }): JSX.Element {
   return (
     <main style={{ minHeight: "100vh", padding: 24, maxWidth: 1440, margin: "0 auto" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0, fontSize: 24 }}>Party Monopoly — Online</h1>
-        <button onClick={onLeave}>Leave</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {onRules && <button onClick={onRules}>How to win</button>}
+          <button onClick={onLeave}>Leave</button>
+        </div>
       </header>
       {children}
     </main>
@@ -201,19 +302,17 @@ function Status({ status, roomId, error }: { status: string; roomId: string | nu
     status === "connecting"
       ? "Connecting…"
       : status === "waiting"
-        ? "Waiting for an opponent to join…"
+        ? "In the lobby…"
         : status === "reconnecting"
           ? "Connection lost — reconnecting…"
-          : status === "playing"
-            ? "Opponent joined — playing."
-            : status === "left"
-              ? "Opponent left. The game has ended."
-              : status === "error"
-                ? `Error: ${error ?? "unknown"}`
-                : "";
+          : status === "left"
+            ? "You were disconnected. The others played on without you."
+            : status === "error"
+              ? `Error: ${error ?? "unknown"}`
+              : ""; // "playing" needs no banner — the board says it
   return (
     <div style={{ margin: "8px 0", display: "flex", gap: 12, alignItems: "center" }}>
-      {roomId && (
+      {roomId && status !== "playing" && (
         <span>
           Room code: <strong style={{ fontFamily: "monospace" }}>{roomId}</strong>
         </span>

@@ -30,6 +30,7 @@ interface Saved {
   weapon: string;
   brawler: string;
   avatar: string;
+  name: string; // display name for online play; "" until the player types one
 }
 function load(): Saved {
   try {
@@ -42,12 +43,13 @@ function load(): Saved {
         weapon: typeof p.weapon === "string" ? p.weapon : "pistol",
         brawler: typeof p.brawler === "string" ? p.brawler : "blaster",
         avatar: typeof p.avatar === "string" ? p.avatar : "blaze",
+        name: typeof p.name === "string" ? p.name : "",
       };
     }
   } catch {
     /* ignore corrupt storage */
   }
-  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze" };
+  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze", name: "" };
 }
 
 interface ProfileState extends Saved {
@@ -55,14 +57,18 @@ interface ProfileState extends Saved {
   buy: (item: ShopItem) => boolean;
   equip: (item: ShopItem) => void;
   setAvatar: (id: string) => void;
+  setName: (name: string) => void;
   award: (n: number) => void;
 }
 
+// how long a display name may be — the server enforces the same cap
+export const MAX_NAME_LEN = 14;
+
 export const useProfile = create<ProfileState>((set, get) => {
   const persist = (): void => {
-    const { coins, owned, weapon, brawler, avatar } = get();
+    const { coins, owned, weapon, brawler, avatar, name } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar }));
+      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar, name }));
     } catch {
       /* ignore */
     }
@@ -84,6 +90,10 @@ export const useProfile = create<ProfileState>((set, get) => {
     },
     setAvatar: (id) => {
       set({ avatar: id });
+      persist();
+    },
+    setName: (name) => {
+      set({ name: name.slice(0, MAX_NAME_LEN) });
       persist();
     },
     award: (n) => {

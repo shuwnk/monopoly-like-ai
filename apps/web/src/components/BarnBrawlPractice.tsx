@@ -350,11 +350,12 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const ray = new THREE.Raycaster();
     ray.far = 5;
 
-    // gun in the character's hands
+    // gun in the character's hands — parented to the TORSO, not the root, so it rides
+    // the body's bob and twist with the hand that holds it instead of hanging in space
     const gun = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.17, 0.66), new THREE.MeshStandardMaterial({ color: "#22242c", roughness: 0.5 }));
     gun.position.set(0.3, 1.02, 0.52);
     gun.castShadow = true;
-    player.add(gun);
+    playerRig.upper.add(gun);
     const gunBaseZ = gun.position.z; // recoil kicks the held gun back toward this rest pose
 
     // ── target dummies (Milestone 2) ──
@@ -373,6 +374,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       strafe: number;
       rig: Char3D;
       speed: number;
+      grounded: boolean;
+      aiming: boolean; // has a target in sight → weapon up
+      mdx: number; // eased move direction, so course changes arc instead of snapping
+      mdz: number;
       gun: Gun;
       deathPop: number; // >0 while playing the death scale-pop before hiding
       name: string;
@@ -426,7 +431,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       beam.visible = false;
       scene.add(beam);
       const e: Enemy = {
-        root, mat: c.tint as THREE.MeshStandardMaterial, fill, hp: ENEMY_HP, alive: true, respawn: 0, flash: 0, pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), home: new THREE.Vector3(x, y, z), fireCool: 1, strafe: Math.random() < 0.5 ? 1 : -1, rig: c, speed: 0, gun: "pistol", deathPop: 0, name, av, kills: 0, deaths: 0,
+        root, mat: c.tint as THREE.MeshStandardMaterial, fill, hp: ENEMY_HP, alive: true, respawn: 0, flash: 0, pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), home: new THREE.Vector3(x, y, z), fireCool: 1, strafe: Math.random() < 0.5 ? 1 : -1, rig: c, speed: 0, grounded: true, aiming: false, mdx: 0, mdz: 0, gun: "pistol", deathPop: 0, name, av, kills: 0, deaths: 0,
         id: enemies.length, tier, aimPos: new THREE.Vector3(x, 1.4, z), acqId: -2, acqTime: 0, lastLosT: 0, reactDelay: 0, shotIndex: 0, pvel: new THREE.Vector3(), beam,
         navMode: "direct", path: [], pathI: 0, repathT: 0, jitter: Math.random() * 0.2, stuckT: 0, lastNavX: x, lastNavZ: z, stuckCount: 0, sidestepT: 0, sidestepSign: 1, directForceT: 0, edgePen: new Map<string, number>(),
       };
@@ -828,6 +833,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         botGrounded = true;
       }
       p.y = ny;
+      e.grounded = botGrounded; // the rig tucks its legs in the air and absorbs the landing
       if (p.y < -8) {
         p.copy(e.home);
         e.vel.set(0, 0, 0);
@@ -966,6 +972,14 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         mvz = rz;
       }
 
+      // ease the desired heading: a bot arcs into a new direction and rolls to a stop
+      // instead of changing course on a single frame. Steady running is untouched
+      // (the vector is already there), so nav timings and pathing don't shift.
+      e.mdx += (mvx - e.mdx) * Math.min(1, dt * 10);
+      e.mdz += (mvz - e.mdz) * Math.min(1, dt * 10);
+      mvx = e.mdx;
+      mvz = e.mdz;
+
       const sp = BOT_SPEED * dt;
       const ox = p.x;
       const oz = p.z;
@@ -1005,7 +1019,15 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       e.pvel.set((p.x - ox) / Math.max(dt, 1e-4), 0, (p.z - oz) / Math.max(dt, 1e-4));
       e.speed += (Math.hypot(p.x - ox, p.z - oz) / Math.max(dt, 1e-4) - e.speed) * Math.min(1, dt * 10);
       e.root.position.copy(p);
-      if (tgt) e.root.rotation.y = Math.atan2(tgt.x - p.x, tgt.z - p.z);
+      e.aiming = !!tgt && tgt.los; // weapon up only when it can actually see someone
+      // turn toward the target instead of snapping to it — an instant pivot is the
+      // single most robotic thing a body can do. Fast enough that aim is unaffected.
+      if (tgt) {
+        let dy = Math.atan2(tgt.x - p.x, tgt.z - p.z) - e.root.rotation.y;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        e.root.rotation.y += dy * Math.min(1, dt * 14);
+      }
 
       // ── fire: real hitscan through the drifted aim point (dodging/cover/range now matter) ──
       e.fireCool = Math.max(0, e.fireCool - dt);
@@ -1198,6 +1220,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         e.fireCool = 1;
         e.aimPos.set(e.home.x, e.home.y + 1.4, e.home.z);
         e.pvel.set(0, 0, 0);
+        e.mdx = 0;
+        e.mdz = 0;
         e.navMode = "direct";
         e.path = [];
         e.pathI = 0;
@@ -1346,7 +1370,11 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       }
 
       player.position.copy(pos);
-      animateChar(playerRig, Math.hypot(hvel.x, hvel.z), dt);
+      // hand the rig the actual velocity, not just its length: the body faces where you
+      // aim, so strafing and backpedalling have to stride sideways/backwards
+      // aim: 1 — you always have a gun in your hands, so the arms hold it rather
+      // than swinging past it
+      animateChar(playerRig, Math.hypot(hvel.x, hvel.z), dt, { vx: hvel.x, vz: hvel.z, grounded, aim: 1 });
 
       // third-person over-the-shoulder camera, tightening when aiming (ADS)
       aimT += ((ads && alive ? 1 : 0) - aimT) * Math.min(1, dt * 12);
@@ -1417,12 +1445,16 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
             e.root.scale.setScalar(1);
             e.pos.copy(pickSpawn()); // spread bot respawns so they can't be farmed at a fixed home
             e.vel.set(0, 0, 0);
+            e.mdx = 0;
+            e.mdz = 0;
             e.root.position.copy(e.pos);
           }
           continue;
         }
         if (playing) botAI(e, dt);
-        animateChar(e.rig, e.speed, dt);
+        // a bot brings its weapon up when it has someone to shoot, and lets its arms
+        // swing while it's just travelling
+        animateChar(e.rig, e.speed, dt, { vx: e.pvel.x, vz: e.pvel.z, grounded: e.grounded, aim: e.aiming ? 1 : 0 });
         e.flash = Math.max(0, e.flash - dt);
         e.mat.emissive.setScalar(Math.min(0.8, e.flash * 5));
         const frac = Math.max(0, e.hp / ENEMY_HP);

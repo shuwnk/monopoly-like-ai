@@ -14,16 +14,21 @@ import { OnlineGame } from "./components/OnlineGame.js";
 import { Shop } from "./components/Shop.js";
 import { WinTest } from "./components/WinTest.js";
 import { useOnlineStore } from "./store/onlineStore.js";
+import { useProfile } from "./store/profile.js";
 
 type Mode = "menu" | "hotseat" | "ai" | "duel" | "airport" | "copa" | "wintest" | "floorbrawl" | "floordrop" | "floordrop-online" | "brawl" | "bomber" | "barn" | "shop" | "online";
 
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("menu");
+  // a room code from an invite link, waiting on a name before we join
+  const [invite, setInvite] = useState("");
   const createRoom = useOnlineStore((s) => s.createRoom);
   const joinRoom = useOnlineStore((s) => s.joinRoom);
 
-  // on load, if a session was stashed before a refresh, jump back into the online game and
-  // reconnect (the server holds the seat for a short window). Runs once.
+  // On load, in order: resume a session stashed before a refresh (the server holds the
+  // seat for a short window), else follow an invite link (?room=CODE) straight into that
+  // room. The code is dropped from the URL afterwards so a later refresh resumes the
+  // session rather than trying to join a room we're already seated in. Runs once.
   const restored = useRef(false);
   useEffect(() => {
     if (restored.current) return;
@@ -32,9 +37,23 @@ export function App(): JSX.Element {
       .getState()
       .restoreSession()
       .then((ok) => {
-        if (ok) setMode("online");
+        if (ok) {
+          setMode("online");
+          return;
+        }
+        const code = new URLSearchParams(window.location.search).get("room")?.trim();
+        if (!code) return;
+        window.history.replaceState(null, "", window.location.pathname);
+        // straight in if we already know who they are; otherwise hold them on the
+        // menu with the code filled so they can put a name on before joining
+        if (useProfile.getState().name.trim()) {
+          void joinRoom(code);
+          setMode("online");
+        } else {
+          setInvite(code);
+        }
       });
-  }, []);
+  }, [joinRoom]);
 
   if (mode === "hotseat") return <HotseatGame onLeave={() => setMode("menu")} />;
   if (mode === "ai") return <HotseatGame onLeave={() => setMode("menu")} vsAI />;
@@ -53,6 +72,7 @@ export function App(): JSX.Element {
 
   return (
     <Menu
+      invite={invite}
       onHotseat={() => setMode("hotseat")}
       onVsAI={() => setMode("ai")}
       onDuelPractice={() => setMode("duel")}

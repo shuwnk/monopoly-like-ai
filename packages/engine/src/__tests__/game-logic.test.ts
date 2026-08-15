@@ -622,6 +622,105 @@ describe("party round", () => {
   });
 });
 
+// A player quitting mid-minigame used to leave the board parked in RENT_SHOWDOWN /
+// PARTY_ROUND with a null pendingMinigame — the server then dereferenced it and the
+// whole room crashed. These lock in the fix: a participant's exit aborts the minigame
+// and resumes the board; a bystander's exit leaves the minigame intact.
+describe("forfeit during a minigame (crash regression)", () => {
+  const p2 = asPlayerId("p2");
+  const p3 = asPlayerId("p3");
+  const p4 = asPlayerId("p4");
+
+  function players(ids: PlayerId[]) {
+    return ids.map((id) => ({ id, name: id, isAI: false }));
+  }
+
+  // p0 (active/payer) landed on sq 3 owned by p1; the rest are bystanders
+  function showdown(ids: PlayerId[]): GameState {
+    const base = createInitialState({ seed: 1, players: players(ids), tunables: TEST_TUNABLES });
+    return {
+      ...base,
+      activePlayerIndex: 0,
+      phase: "RENT_SHOWDOWN",
+      ownership: { 3: p1 },
+      lastRoll: [2, 1], // not doubles → the payer's turn ends after the duel resolves
+      players: base.players.map((p, i) => (i === 0 ? { ...p, position: 3 } : p)),
+      pendingMinigame: {
+        minigameId: asMinigameId("reflex-tap-duel"),
+        participants: [
+          { playerId: p0, isAI: false },
+          { playerId: p1, isAI: false },
+        ],
+        context: { reason: "RENT_SHOWDOWN" as const, stakeData: { baseRent: 100, propertyId: 3 } },
+        config: {},
+      },
+    };
+  }
+
+  // a party round runs between turns — the pointer has already advanced to `active`
+  function party(ids: PlayerId[], active: number, participantIds: PlayerId[]): GameState {
+    const base = createInitialState({ seed: 1, players: players(ids), tunables: { ...TEST_TUNABLES, partyRoundTopPrize: 15000 } });
+    return {
+      ...base,
+      activePlayerIndex: active,
+      phase: "PARTY_ROUND",
+      pendingMinigame: {
+        minigameId: asMinigameId("floordrop"),
+        participants: participantIds.map((id) => ({ playerId: id, isAI: false })),
+        context: { reason: "PARTY_ROUND" as const, party: { game: "floordrop", topPrize: 15000 } },
+        config: {},
+      },
+    };
+  }
+
+  it("owner (a duel participant) leaving mid-showdown aborts the duel and resumes play", () => {
+    const after = reduce(showdown([p0, p1, p2]), { type: "FORFEIT", playerId: p1 }).state;
+    expect(after.players.find((p) => p.id === p1)!.bankrupt).toBe(true);
+    expect(after.phase).not.toBe("RENT_SHOWDOWN"); // duel dropped, not left dangling
+    expect(after.pendingMinigame).toBeNull(); // <- the value the server used to deref
+    expect(after.players[0]!.money).toBe(1500); // duel aborted → payer owes no rent
+    expect(after.phase).not.toBe("GAME_OVER"); // p0 and p2 remain
+  });
+
+  it("a bystander leaving mid-showdown leaves the duel intact so it still resolves", () => {
+    const after = reduce(showdown([p0, p1, p2]), { type: "FORFEIT", playerId: p2 }).state;
+    expect(after.players.find((p) => p.id === p2)!.bankrupt).toBe(true);
+    expect(after.phase).toBe("RENT_SHOWDOWN"); // untouched
+    expect(after.pendingMinigame).not.toBeNull();
+    // and the original duel still settles normally between the payer and owner
+    const resolved = reduce(after, {
+      type: "SUBMIT_MINIGAME_RESULT",
+      result: result("COMPLETED", "P1_WIN", [p1, p0]),
+    }).state;
+    expect(resolved.players[0]!.money).toBe(1500 - 150);
+    expect(resolved.players[1]!.money).toBe(1500 + 150);
+  });
+
+  it("a participant leaving mid-party-round aborts it and resumes the turn", () => {
+    // p2 (not the active player) is one of the seated fighters
+    const after = reduce(party([p0, p1, p2], 1, [p0, p1, p2]), { type: "FORFEIT", playerId: p2 }).state;
+    expect(after.players.find((p) => p.id === p2)!.bankrupt).toBe(true);
+    expect(after.phase).toBe("AWAITING_ROLL"); // <- resumed, not parked in PARTY_ROUND
+    expect(after.pendingMinigame).toBeNull();
+    expect(after.activePlayerIndex).toBe(1); // p1's turn resumes untouched
+  });
+
+  it("the active fighter leaving mid-party-round resumes on the next solvent player", () => {
+    const after = reduce(party([p0, p1, p2], 1, [p0, p1, p2]), { type: "FORFEIT", playerId: p1 }).state;
+    expect(after.phase).toBe("AWAITING_ROLL");
+    expect(after.pendingMinigame).toBeNull();
+    expect(after.players[after.activePlayerIndex]!.bankrupt).toBe(false); // skipped the quitter
+  });
+
+  it("a non-seated player leaving a party round leaves it intact", () => {
+    // 5 players, only the first 4 are seated fighters; p4 is a spectator
+    const after = reduce(party([p0, p1, p2, p3, p4], 0, [p0, p1, p2, p3]), { type: "FORFEIT", playerId: p4 }).state;
+    expect(after.players.find((p) => p.id === p4)!.bankrupt).toBe(true);
+    expect(after.phase).toBe("PARTY_ROUND"); // round continues for the four fighters
+    expect(after.pendingMinigame).not.toBeNull();
+  });
+});
+
 describe("jail", () => {
   it("lands on the airport (square 30) and pauses to pick a destination", () => {
     // square 30 is now Aeroporto: landing pauses at AWAITING_AIRPORT (no jail)

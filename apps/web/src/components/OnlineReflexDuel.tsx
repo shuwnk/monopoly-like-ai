@@ -7,17 +7,25 @@ import { marginLine, reactionLabel } from "./duelReveal.js";
 // how long to hold the reveal before letting the resolved board take over
 const REVEAL_MS = 2200;
 
-// single-seat reflex duel. the server drives timing: red on "start", green on
-// "go" (we measure from then), the opponent is on another machine. after a tap
+// Single-seat reflex duel. The server drives timing: red on "start", green on
+// "go" (we measure from then), the opponent is on another machine. After a tap
 // we wait for the server's "result", show both reaction times, then dismiss.
+//
+// Only the payer and the owner duel. At a table of 3+ everyone else gets the same
+// view as a scoreboard: no tap button, no keys, and both duellists named — a
+// spectator's tap is ignored by the server anyway.
 export function OnlineReflexDuel({
   signal,
   you,
+  payerName,
+  ownerName,
   onTap,
   onRevealDone,
 }: {
   signal: ShowdownSignal;
   you: PlayerId | null;
+  payerName: string;
+  ownerName: string;
   onTap: (reactionMs: number | null, falseStart: boolean) => void;
   onRevealDone: () => void;
 }): JSX.Element {
@@ -25,6 +33,9 @@ export function OnlineReflexDuel({
   // null until this client taps; then whether it was an early (red) tap
   const [myTap, setMyTap] = useState<{ falseStart: boolean } | null>(null);
   const goAt = useRef<number | null>(null);
+  const youArePayer = you !== null && you === signal.payerId;
+  const youAreOwner = you !== null && you === signal.ownerId;
+  const spectating = !youArePayer && !youAreOwner;
 
   // a new "go" (seq bump) means measuring starts now
   useEffect(() => {
@@ -32,7 +43,7 @@ export function OnlineReflexDuel({
   }, [signal.phase, signal.seq]);
 
   function tap(): void {
-    if (myTap || signal.phase === "result") return;
+    if (spectating || myTap || signal.phase === "result") return;
     if (goAt.current === null) {
       setMyTap({ falseStart: true });
       onTap(null, true); // tapped on red
@@ -43,6 +54,7 @@ export function OnlineReflexDuel({
   }
 
   useEffect(() => {
+    if (spectating) return;
     function onKey(e: KeyboardEvent): void {
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
@@ -60,42 +72,60 @@ export function OnlineReflexDuel({
     return () => window.clearTimeout(t);
   }, [signal.phase, signal.id, onRevealDone]);
 
-  const message = myTap
-    ? myTap.falseStart
-      ? "Too soon — you jumped early!"
-      : "Tapped ✓ — waiting for the other player…"
-    : lit
-      ? "TAP!"
-      : "Wait for green…";
+  const message = spectating
+    ? lit
+      ? "GO!"
+      : "Watch — they're waiting for green…"
+    : myTap
+      ? myTap.falseStart
+        ? "Too soon — you jumped early!"
+        : "Tapped ✓ — waiting for the other player…"
+      : lit
+        ? "TAP!"
+        : "Wait for green…";
 
   return (
     <section style={{ margin: "16px 0", padding: 14, border: "1px solid var(--neon-a)", borderRadius: "var(--radius)", background: "var(--neon-bg)", color: "#e9ecf4", boxShadow: "0 0 26px rgba(224,57,143,0.35)" }}>
       <div style={{ marginBottom: 8 }}>
-        <strong>Rent Showdown — Reflex Tap Duel.</strong> Base rent R${signal.baseRent}. Tap <kbd>Space</kbd> on green.
+        <strong>Rent Showdown — {payerName} vs {ownerName}.</strong> Base rent R${signal.baseRent}.{" "}
+        {spectating ? "You're watching this one." : (
+          <>
+            Tap <kbd>Space</kbd> on green.
+          </>
+        )}
       </div>
       <DuelSignal lit={lit} message={signal.phase === "result" ? "Result" : message} />
       {signal.phase === "result" && signal.result ? (
-        <Reveal signal={signal} you={you} />
+        <Reveal signal={signal} youArePayer={youArePayer} spectating={spectating} payerName={payerName} ownerName={ownerName} />
       ) : (
-        <button
-          style={{ width: "100%", padding: 16, marginTop: 8 }}
-          disabled={myTap !== null}
-          onClick={tap}
-        >
-          Tap!
-        </button>
+        !spectating && (
+          <button style={{ width: "100%", padding: 16, marginTop: 8 }} disabled={myTap !== null} onClick={tap}>
+            Tap!
+          </button>
+        )
       )}
     </section>
   );
 }
 
-// both reaction times labelled You / Opponent (the recipient maps itself via
-// its PlayerId), plus the margin line — the same reveal the hotseat duel shows
-function Reveal({ signal, you }: { signal: ShowdownSignal; you: PlayerId | null }): JSX.Element {
+// both reaction times plus the margin line — the same reveal the hotseat duel
+// shows. A duellist reads You / Opponent; everyone else reads both real names.
+function Reveal({
+  signal,
+  youArePayer,
+  spectating,
+  payerName,
+  ownerName,
+}: {
+  signal: ShowdownSignal;
+  youArePayer: boolean;
+  spectating: boolean;
+  payerName: string;
+  ownerName: string;
+}): JSX.Element {
   const r = signal.result!;
-  const youArePayer = you !== null && you === r.payerId;
-  const payerName = youArePayer ? "You" : "Opponent";
-  const ownerName = youArePayer ? "Opponent" : "You";
+  const payerLabel = spectating ? payerName : youArePayer ? "You" : "Opponent";
+  const ownerLabel = spectating ? ownerName : youArePayer ? "Opponent" : "You";
   const a = { reactionMs: r.payerReactionMs, falseStart: r.payerFalseStart };
   const b = { reactionMs: r.ownerReactionMs, falseStart: r.ownerFalseStart };
 
@@ -103,14 +133,14 @@ function Reveal({ signal, you }: { signal: ShowdownSignal; you: PlayerId | null 
     <div style={{ marginTop: 8, padding: 10, background: "#181820", border: "1px solid #444", borderRadius: 4, fontSize: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <span>
-          {payerName}: <strong>{reactionLabel(a)}</strong>
+          {payerLabel}: <strong>{reactionLabel(a)}</strong>
         </span>
         <span>
-          {ownerName}: <strong>{reactionLabel(b)}</strong>
+          {ownerLabel}: <strong>{reactionLabel(b)}</strong>
         </span>
       </div>
       <div style={{ marginTop: 6, textAlign: "center", opacity: 0.85 }}>
-        {marginLine(a, b, r.outcome, r.aborted, payerName, ownerName)}
+        {marginLine(a, b, r.outcome, r.aborted, payerLabel, ownerLabel)}
       </div>
     </div>
   );

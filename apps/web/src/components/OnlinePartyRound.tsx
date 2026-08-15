@@ -4,6 +4,7 @@ import { AVATARS, avatarById, avatarRoster, type Avatar } from "../game/avatars.
 import { useProfile } from "../store/profile.js";
 import { useOnlineStore } from "../store/onlineStore.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
+import { TouchStick } from "./TouchStick.js";
 
 // The online party round: a dumb renderer of the server's authoritative Floor Drop sim,
 // embedded in the board flow (uses the existing room via the store — no own connection).
@@ -121,7 +122,10 @@ export function OnlinePartyRound(): JSX.Element {
         <canvas ref={canvasRef} width={820} height={560} style={{ width: "100%", aspectRatio: "820 / 560", background: "#0a0e15", borderRadius: 8, display: "block" }} />
         <div ref={aliveRef} style={{ position: "absolute", top: 12, left: 16, color: "#fff", fontWeight: 800, fontSize: 18, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Alive: —</div>
         <div ref={timeRef} style={{ position: "absolute", top: 14, right: 16, color: "rgba(255,255,255,0.75)", fontWeight: 700, fontSize: 15, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>0s</div>
-        <div style={{ position: "absolute", top: 14, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>WASD / arrows move · Space is disabled — just don't fall</div>
+        <div style={{ position: "absolute", top: 14, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>WASD / arrows — or drag anywhere on a phone. Just don&apos;t fall.</div>
+
+        {/* only live while the round is running: the placement overlay sits on top of it */}
+        {!partyOver && <TouchStick onChange={(dx, dy) => useOnlineStore.getState().sendPartyInput(dx, dy)} />}
 
         {partyOver && (
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, background: "rgba(8,10,14,0.82)", borderRadius: 8, textAlign: "center", padding: 24 }}>

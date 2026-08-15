@@ -607,12 +607,45 @@ function endOnTime(state: GameState): ReducerResult<GameState> {
   return gameOver(state, richest(state, solvent).id, []);
 }
 
+// Put the board back into a playable state after a pending minigame is dropped:
+// end the game if only one player is left, otherwise make sure the active player
+// is solvent (skipping the quitter) and awaiting their roll. Used when a party
+// round is aborted — the turn already advanced before it began, so we resume it
+// rather than ending it again.
+function resumeBoard(state: GameState, events: readonly GameEvent[]): ReducerResult<GameState> {
+  const solvent = state.players.filter((p) => !p.bankrupt);
+  if (solvent.length <= 1) {
+    return solvent[0] ? gameOver(state, solvent[0].id, [...events]) : done({ ...state, phase: "GAME_OVER" });
+  }
+  const activeIdx = state.players[state.activePlayerIndex]!.bankrupt ? nextActiveIndex(state) : state.activePlayerIndex;
+  return { state: { ...state, activePlayerIndex: activeIdx, phase: "AWAITING_ROLL" }, events: [...events] };
+}
+
 // a player left the game: bankrupt them (assets to the bank) and keep play going.
 // If it was their turn — or if this leaves one player standing — advance the turn
 // so the room never stalls waiting on someone who's gone.
 function forfeit(state: GameState, playerId: PlayerId): ReducerResult<GameState> {
   const idx = state.players.findIndex((p) => p.id === playerId);
   if (idx < 0 || state.players[idx]!.bankrupt) return done(state);
+
+  // A player quitting mid-minigame must never leave the board parked in a
+  // RENT_SHOWDOWN / PARTY_ROUND phase with a dangling pendingMinigame — the host
+  // dereferences it, and the phase can never resolve on its own.
+  const pending = state.pendingMinigame;
+  if (pending) {
+    const isParticipant = pending.participants.some((p) => p.playerId === playerId);
+    // A non-participant's exit leaves the minigame intact so it still resolves for
+    // everyone else — just bankrupt them where they stand; the minigame owns the phase.
+    if (!isParticipant) return bankrupt({ ...state, pendingDebt: null }, idx, null);
+    // A participant's exit aborts the minigame: bankrupt them, then resume the board.
+    // A showdown continues the active player's landing (postLanding handles the
+    // payer-left and owner-left cases); a party round resumes the next turn.
+    const broke = bankrupt({ ...state, pendingDebt: null, pendingMinigame: null }, idx, null);
+    return state.phase === "PARTY_ROUND"
+      ? resumeBoard(broke.state, broke.events)
+      : postLanding(broke.state, broke.events);
+  }
+
   const broke = bankrupt({ ...state, pendingDebt: null, pendingMinigame: null }, idx, null);
   const solvent = broke.state.players.filter((p) => !p.bankrupt);
   if (idx === state.activePlayerIndex || solvent.length <= 1) {

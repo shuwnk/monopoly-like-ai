@@ -94,7 +94,22 @@
       "Bash(git ls-tree *)",
       "Bash(grep -vE \"onMessage\\\\\\(\\\\\\)|Sponsor|star on GitHub|Deploy and scale|^\\\\s*$\")",
       "Bash(node --input-type=module -e ' *)",
-      "Bash(node -e \"console.log\\('local major:', process.versions.node.split\\('.'\\)[0]\\)\")"
+      "Bash(node -e \"console.log\\('local major:', process.versions.node.split\\('.'\\)[0]\\)\")",
+      "Bash(git -C /Users/mhd/Projects/react/monopoly log --oneline -8)",
+      "Bash(perl -i -pe 's{^  return raw\\\\.replace\\\\\\(/\\\\[.*?\\\\]/g, \"\"\\\\\\)\\\\.replace}{  return raw.replace\\(/[\\\\\\\\u0000-\\\\\\\\u001f\\\\\\\\u007f]/g, \"\"\\).replace}' packages/server/src/GameRoom.ts)",
+      "Bash(node /private/tmp/claude-501/-Users-mhd-Projects-react-monopoly/04e52ac9-e3f3-417c-9ee4-80dd70a1dcc0/scratchpad/lobbycheck.mjs)",
+      "Bash(node /Users/mhd/Projects/react/monopoly/.lobbycheck.mjs)",
+      "Bash(perl -i -pe 's{^  room\\\\.onMessage\\\\\\(\"error\", \\\\\\(m\\\\\\) => log\\\\\\(`  \\\\[\\\\$\\\\{tag\\\\}\\\\] server error: \\\\$\\\\{m\\\\.message\\\\}`\\\\\\)\\\\\\);$}{  room.onMessage\\(\"error\", \\(m\\) => log\\(`  [\\\\${tag}] server error: \\\\${m.message}`\\)\\);\\\\n  room.send\\(\"sync\", {}\\); // the real client does this once its handlers are attached}' .lobbycheck.mjs)",
+      "Bash(git stash *)",
+      "Bash(VITE_SERVER_URL=\"wss://deploy-check.example\" npm run build)",
+      "Bash(timeout 30 node .healthprobe.mjs)",
+      "Bash(grep -vE \"Colyseus|sponsor|star|Deploy|^$|___|/ _|\\\\\\\\\\\\\\\\_|\\\\|_|·|💖|🌟|☁️|/ /\")",
+      "Bash(node .healthprobe.mjs)",
+      "Bash(node .lobbycheck.mjs)",
+      "Bash(pkill -f \"tsx src/index.ts\")",
+      "Bash(python3 -)",
+      "Bash(awk 'NR>=1240 && NR<=1520' apps/web/src/components/BarnBrawlPractice.tsx)",
+      "Bash(awk 'NR>=815 && NR<=1060' apps/web/src/components/BarnBrawlPractice.tsx)"
     ]
   }
 }

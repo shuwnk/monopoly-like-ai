@@ -1,18 +1,6 @@
-import { useEffect, useRef } from "react";
-import { AVATARS, drawAvatar, type Avatar } from "../game/avatars.js";
+import { AVATARS } from "../game/avatars.js";
 import { SHOP, useProfile, type ShopItem } from "../store/profile.js";
-
-// a mascot rendered to a small canvas for the picker
-function AvatarThumb({ av, size = 56 }: { av: Avatar; size?: number }): JSX.Element {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const ctx = ref.current?.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, size, size);
-    drawAvatar(ctx, av, size / 2, size / 2 - size * 0.06, size * 0.34, -Math.PI / 2);
-  }, [av, size]);
-  return <canvas ref={ref} width={size} height={size} style={{ width: size, height: size }} />;
-}
+import { AvatarThumb } from "./AvatarThumb.js";
 
 // Shop + loadout screen: spend coins earned from the minigames to unlock weapons
 // and brawlers, and equip which one you take into a match.

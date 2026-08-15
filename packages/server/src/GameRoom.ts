@@ -15,8 +15,10 @@ import {
   type FDOver,
   type FDStart,
   type LobbyMessage,
+  type LobbySeat,
   type MinigameResult,
   type PlayerId,
+  type PlayerIdentity,
   type ShowdownResultMessage,
   type ShowdownStartMessage,
   type StateMessage,
@@ -36,6 +38,10 @@ const PARTY_RESULT_MS = 3000;
 // how long we wait for a player's Copa / Aeroporto pick before auto-resolving it
 // with a sensible default, so an idle or dropped player can't stall the room
 const PICK_TIMEOUT_MS = 20000;
+// how long we wait on a normal turn decision (roll / buy) before auto-playing it,
+// so a distracted or dropped active player can't freeze the room mid-turn. More
+// generous than a forced pick since it's a real decision.
+const TURN_TIMEOUT_MS = 30000;
 // hold a dropped player's seat this long before giving up on the game
 const RECONNECT_WINDOW_S = 30;
 // game-length bounds (seconds) for the host's countdown, and the fallback default
@@ -46,15 +52,26 @@ const DEFAULT_DURATION_S = 900; // 15 min
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 10;
 const HOST_SEAT = asPlayerId("p0"); // the first joiner is the host
+// a display name is shown to the whole table, so it gets trimmed and capped
+const MAX_NAME_LEN = 14;
+const DEFAULT_AVATAR = "blaze";
 
 export class GameRoom extends Room {
   private game: GameState | null = null;
   // sessionId -> playerId
   private seats = new Map<string, PlayerId>();
+  // seat -> who that player says they are. Keyed by seat, not sessionId, so a
+  // reconnecting player keeps their name.
+  private profiles = new Map<PlayerId, { name: string; avatar: string }>();
   // collected taps for the current showdown, keyed by playerId
   private taps = new Map<PlayerId, ReflexInput>();
+  // the two players in the live duel; everyone else spectates and may not tap
+  private duellists: PlayerId[] = [];
   private goTimer: ReturnType<typeof setTimeout> | null = null;
   private tapTimer: ReturnType<typeof setTimeout> | null = null;
+  // a duel is live between startShowdown() and its resolution; guards against
+  // re-arming an in-progress duel when a bystander's forfeit re-broadcasts state
+  private showdownArmed = false;
   private pickTimer: ReturnType<typeof setTimeout> | null = null;
   private gameTimer: ReturnType<typeof setTimeout> | null = null;
   // host-chosen game length + the epoch-ms deadline once the game starts
@@ -77,6 +94,7 @@ export class GameRoom extends Room {
     this.onMessage(C2S.action, (client, msg: ActionMessage) => this.onAction(client, msg));
     this.onMessage(C2S.tap, (client, msg: TapMessage) => this.onTap(client, msg));
     this.onMessage(C2S.start, (client) => this.onStartRequest(client));
+    this.onMessage(C2S.sync, (client) => this.sendSnapshot(client));
     // movement input during a party round (reuses the Floor Drop wire protocol)
     this.onMessage(FDClient.input, (client, msg: FDInput) => {
       const id = this.partySeat.get(client.sessionId);
@@ -84,13 +102,17 @@ export class GameRoom extends Room {
     });
   }
 
-  override onJoin(client: Client) {
+  override onJoin(client: Client, options?: PlayerIdentity) {
     const seat = this.nextSeat();
     if (this.started || !seat) {
       client.leave();
       return;
     }
     this.seats.set(client.sessionId, seat);
+    this.profiles.set(seat, {
+      name: this.uniqueName(cleanName(options?.name) || `Player ${this.seats.size}`),
+      avatar: typeof options?.avatar === "string" ? options.avatar : DEFAULT_AVATAR,
+    });
     if (this.seats.size >= this.maxClients) this.startGame();
     else this.broadcastLobby();
   }
@@ -121,6 +143,7 @@ export class GameRoom extends Room {
     // still in the lobby: free the seat and refresh everyone (or close if empty)
     if (!this.started) {
       this.seats.delete(client.sessionId);
+      this.profiles.delete(seat); // free the name too, so the reused seat re-registers
       if (this.seats.size === 0) this.disconnect();
       else this.broadcastLobby();
       return;
@@ -153,11 +176,59 @@ export class GameRoom extends Room {
     return null;
   }
 
-  private broadcastLobby() {
-    for (const c of this.clients) {
-      const seat = this.seats.get(c.sessionId);
-      if (seat) c.send(S2C.lobby, { joined: this.seats.size, capacity: this.maxClients, host: seat === HOST_SEAT } satisfies LobbyMessage);
+  // two friends called "Alex" would be unreadable at the table; suffix the later one
+  private uniqueName(want: string): string {
+    const taken = new Set([...this.profiles.values()].map((p) => p.name.toLowerCase()));
+    if (!taken.has(want.toLowerCase())) return want;
+    for (let n = 2; ; n++) {
+      const tryName = `${want} ${n}`;
+      if (!taken.has(tryName.toLowerCase())) return tryName;
     }
+  }
+
+  // seats in join order, with the name/avatar each player picked
+  private roster(): LobbySeat[] {
+    return [...this.seats.values()]
+      .sort()
+      .map((id) => ({ id, name: this.nameOf(id), avatar: this.profiles.get(id)?.avatar ?? DEFAULT_AVATAR }));
+  }
+
+  private nameOf(seat: PlayerId): string {
+    return this.profiles.get(seat)?.name ?? `Player ${Number(seat.slice(1)) + 1}`;
+  }
+
+  private broadcastLobby() {
+    for (const c of this.clients) this.sendLobby(c);
+  }
+
+  private sendLobby(client: Client) {
+    const seat = this.seats.get(client.sessionId);
+    if (!seat) return;
+    client.send(S2C.lobby, {
+      joined: this.seats.size,
+      capacity: this.maxClients,
+      host: seat === HOST_SEAT,
+      you: seat,
+      hostId: HOST_SEAT,
+      players: this.roster(),
+    } satisfies LobbyMessage);
+  }
+
+  // whatever this client should be looking at right now. Answers C2S.sync, which
+  // a client sends once its handlers are attached — the message its own join
+  // triggered went out before it could listen for it.
+  private sendSnapshot(client: Client) {
+    const seat = this.seats.get(client.sessionId);
+    if (!seat) return;
+    if (!this.game) {
+      this.sendLobby(client);
+      return;
+    }
+    client.send(S2C.state, {
+      state: this.game,
+      you: seat,
+      ...(this.endsAt !== null ? { endsAt: this.endsAt } : {}),
+    } satisfies StateMessage<GameState>);
   }
 
   // a seated player left mid-game: remove them from the game without stalling it
@@ -192,6 +263,8 @@ export class GameRoom extends Room {
     if (this.tapTimer) clearTimeout(this.tapTimer);
     this.goTimer = null;
     this.tapTimer = null;
+    this.showdownArmed = false;
+    this.duellists = [];
   }
 
   private startGame() {
@@ -202,7 +275,7 @@ export class GameRoom extends Room {
     const seated = [...this.seats.values()].sort();
     this.game = createInitialState({
       seed: Date.now(),
-      players: seated.map((id, i) => ({ id, name: `Player ${i + 1}`, isAI: false })),
+      players: seated.map((id) => ({ id, name: this.nameOf(id), isAI: false })),
       // online party rounds run Floor Drop only — it's the one minigame with a server-side
       // authoritative sim. Barn Brawl / Bomberman have no server sim yet, so restrict the pick.
       tunables: { partyGames: ["floordrop"] },
@@ -211,6 +284,7 @@ export class GameRoom extends Room {
     this.endsAt = Date.now() + this.durationSec * 1000;
     this.gameTimer = setTimeout(() => this.timeUp(), this.durationSec * 1000);
     this.broadcastState();
+    this.schedulePickFallback(); // arm the first player's turn timer
   }
 
   private timeUp() {
@@ -262,24 +336,36 @@ export class GameRoom extends Room {
   private applyAction(action: GameAction) {
     this.game = reduce(this.game!, action).state;
     this.broadcastState();
+    const phase = this.game.phase;
 
-    if (this.game.phase === "RENT_SHOWDOWN") {
+    if (phase === "RENT_SHOWDOWN") {
       this.clearPickTimer();
-      this.startShowdown();
+      // arm a fresh duel only on ENTERING the phase — a bystander's forfeit
+      // re-broadcasts state while a duel is already running (showdownArmed)
+      if (!this.showdownArmed) this.startShowdown();
       return;
     }
-    // start a party round only on ENTERING the phase — never re-enter one already running
-    // (a stray re-entry would rebuild the sim / deref a cleared pendingMinigame)
-    if (this.game.phase === "PARTY_ROUND") {
+    // any other phase means we're no longer in a duel: kill stray duel timers so a
+    // late go/tap callback can't fire against a resolved or aborted showdown
+    this.clearShowdownTimers();
+
+    if (phase === "PARTY_ROUND") {
       this.clearPickTimer();
+      // start a party round only on ENTERING the phase — never re-enter one already
+      // running (a stray re-entry would rebuild the sim / deref a cleared pendingMinigame)
       if (!this.partySim) this.startPartyRound();
       return;
     }
+    // a forfeit can abort a party round out from under its live sim (the engine
+    // resumes the board); tear the stale sim down so it can't keep ticking.
+    if (this.partySim) this.abortPartyRound();
     this.schedulePickFallback();
   }
 
-  // Copa / Aeroporto / build-on-landing pause the engine for the active player's
-  // choice. The client shows a prompt; this only fires if they don't answer in time.
+  // Every phase where the room waits on one player arms a fallback so an idle or
+  // dropped player can't stall it: the forced picks (Copa / Aeroporto / build / debt)
+  // auto-resolve to a sensible default, and a normal turn (roll / buy) auto-plays.
+  // The client shows a prompt / turn UI; this only fires if they don't act in time.
   private schedulePickFallback() {
     this.clearPickTimer();
     const phase = this.game!.phase;
@@ -290,6 +376,8 @@ export class GameRoom extends Room {
       phase === "AWAITING_DEBT_PAYMENT"
     ) {
       this.pickTimer = setTimeout(() => this.autoResolvePick(), PICK_TIMEOUT_MS);
+    } else if (phase === "AWAITING_ROLL" || phase === "AWAITING_BUY_DECISION") {
+      this.pickTimer = setTimeout(() => this.autoResolvePick(), TURN_TIMEOUT_MS);
     }
   }
 
@@ -297,7 +385,11 @@ export class GameRoom extends Room {
     this.clearPickTimer();
     const game = this.game;
     if (!game) return;
-    if (game.phase === "AWAITING_WORLD_CUP") {
+    if (game.phase === "AWAITING_ROLL") {
+      this.applyAction({ type: "ROLL_DICE" }); // default: take the turn for them
+    } else if (game.phase === "AWAITING_BUY_DECISION") {
+      this.applyAction({ type: "DECLINE_BUY" }); // default: don't spend an absent player's cash
+    } else if (game.phase === "AWAITING_WORLD_CUP") {
       // boost the player's first not-yet-boosted stall (the engine guarantees one exists)
       const active = game.players[game.activePlayerIndex]!;
       const stall = Object.entries(game.ownership).find(
@@ -317,9 +409,19 @@ export class GameRoom extends Room {
 
   private startShowdown() {
     const game = this.game!;
+    // defensive: only arm when the duel context is actually present
+    if (!game.pendingMinigame?.context.stakeData) return;
+    const [payer, owner] = game.pendingMinigame.participants;
+    if (!payer || !owner) return;
     this.taps.clear();
-    const baseRent = game.pendingMinigame!.context.stakeData!.baseRent;
-    this.broadcast(S2C.showdownStart, { baseRent } satisfies ShowdownStartMessage);
+    this.showdownArmed = true;
+    this.duellists = [payer.playerId, owner.playerId];
+    const baseRent = game.pendingMinigame.context.stakeData.baseRent;
+    this.broadcast(S2C.showdownStart, {
+      baseRent,
+      payerId: payer.playerId,
+      ownerId: owner.playerId,
+    } satisfies ShowdownStartMessage);
 
     const delay = cfg.minDelayMs + Math.random() * (cfg.maxDelayMs - cfg.minDelayMs);
     this.goTimer = setTimeout(() => this.goSignal(), delay);
@@ -333,18 +435,23 @@ export class GameRoom extends Room {
   private onTap(client: Client, msg: TapMessage) {
     if (!this.game || this.game.phase !== "RENT_SHOWDOWN") return;
     const you = this.seats.get(client.sessionId);
-    if (!you || this.taps.has(you)) return;
+    // only the payer and the owner duel — a spectator's tap is ignored, and the
+    // duel resolves as soon as those two have answered (not the whole table,
+    // which at 3+ players would never happen and always burn the tap timeout)
+    if (!you || !this.duellists.includes(you) || this.taps.has(you)) return;
 
     this.taps.set(you, { reactionMs: msg.reactionMs, falseStart: msg.falseStart });
-    if (this.taps.size === this.seats.size) this.resolveShowdown();
+    if (this.duellists.every((id) => this.taps.has(id))) this.resolveShowdown();
   }
 
   private resolveShowdown() {
     this.clearShowdownTimers();
     const game = this.game;
-    if (!game || game.phase !== "RENT_SHOWDOWN") return;
+    // a bystander's forfeit can abort the duel between arming and resolution;
+    // the phase (and pendingMinigame) guard means there's nothing left to resolve
+    if (!game || game.phase !== "RENT_SHOWDOWN" || !game.pendingMinigame) return;
 
-    const [payer, owner] = game.pendingMinigame!.participants;
+    const [payer, owner] = game.pendingMinigame.participants;
     const payerTap = this.taps.get(payer!.playerId) ?? MISSING_TAP;
     const ownerTap = this.taps.get(owner!.playerId) ?? MISSING_TAP;
 
@@ -362,6 +469,9 @@ export class GameRoom extends Room {
     } satisfies ShowdownResultMessage);
     this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result: res.result }).state;
     this.broadcastState();
+    // paying rent can push the payer into debt (or any other pausable phase) —
+    // arm the fallback so a silent/dropped player there can't stall the room
+    this.schedulePickFallback();
   }
 
   // --- party round (inline Floor Drop: the board room hosts an authoritative sim while
@@ -414,18 +524,47 @@ export class GameRoom extends Room {
     this.partyOverTimer = null;
     const sim = this.partySim;
     const game = this.game;
-    if (!sim || !game) return;
-    // per-fighter placements → best-to-worst ranking over the board playerIds
-    const ranking = [...sim.fighters]
-      .sort((a, b) => (a.place || 1) - (b.place || 1))
-      .map((f) => this.partyPlayers[f.id])
-      .filter((id): id is PlayerId => id !== undefined);
-    const result: MinigameResult = { minigameId: game.pendingMinigame!.minigameId, status: "COMPLETED", outcome: "P0_WIN", ranking };
     this.partySim = null;
     this.partySeat.clear();
-    this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result }).state;
-    this.broadcastState();
-    // now that the board has resumed, apply any leaves that happened during the round
+    if (!sim || !game) return;
+    // the round may have been aborted out from under the sim — e.g. a participant's
+    // reconnect window expired and forfeited them, which resumes the board. The engine
+    // has already left PARTY_ROUND, so there's nothing to score; just flush leaves.
+    if (game.phase === "PARTY_ROUND" && game.pendingMinigame) {
+      // per-fighter placements → best-to-worst ranking over the board playerIds
+      const ranking = [...sim.fighters]
+        .sort((a, b) => (a.place || 1) - (b.place || 1))
+        .map((f) => this.partyPlayers[f.id])
+        .filter((id): id is PlayerId => id !== undefined);
+      const result: MinigameResult = { minigameId: game.pendingMinigame.minigameId, status: "COMPLETED", outcome: "P0_WIN", ranking };
+      this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result }).state;
+      this.broadcastState();
+      this.schedulePickFallback(); // arm the resumed player's turn timer
+    }
+    this.flushPendingLeaves();
+  }
+
+  // a forfeit aborted the party round while its sim was still live: stop the sim,
+  // tell clients to leave the party view, and drop the pending leaves. The engine
+  // has already resumed the board, so no result is scored.
+  private abortPartyRound() {
+    if (this.partyOverTimer) clearTimeout(this.partyOverTimer);
+    this.partyOverTimer = null;
+    const sim = this.partySim;
+    this.partySim = null;
+    this.partySeat.clear();
+    this.setSimulationInterval(); // stop ticking
+    if (sim) {
+      this.broadcast(FDServer.over, {
+        winner: sim.winner?.name ?? "",
+        places: sim.fighters.map((f) => [f.id, f.place === 0 ? 1 : f.place] as const),
+      } satisfies FDOver);
+    }
+    this.flushPendingLeaves();
+  }
+
+  // apply any leaves that were deferred while a party round was running
+  private flushPendingLeaves() {
     const leaves = this.pendingLeaves;
     this.pendingLeaves = [];
     for (const s of leaves) this.forfeit(s);
@@ -445,4 +584,12 @@ export class GameRoom extends Room {
   private sendError(client: Client, message: string) {
     client.send(S2C.error, { message } satisfies ErrorMessage);
   }
+}
+
+// A name a client sends goes on everyone's screen, so collapse whitespace, drop
+// control characters, and cap the length. Empty means "no name given".
+function cleanName(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  return raw.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LEN);
 }

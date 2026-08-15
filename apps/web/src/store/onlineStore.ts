@@ -1,7 +1,18 @@
 import type { GameState } from "@party-monopoly/engine";
-import type { ClientActionType, FDOver, FDRosterEntry, FDSnapshot, FDStart, LobbyMessage, PlayerId, ShowdownResultMessage } from "@party-monopoly/types";
+import type {
+  ClientActionType,
+  FDOver,
+  FDRosterEntry,
+  FDSnapshot,
+  FDStart,
+  LobbyMessage,
+  PlayerId,
+  ShowdownResultMessage,
+  ShowdownStartMessage,
+} from "@party-monopoly/types";
 import { create } from "zustand";
 import { OnlineClient } from "../net/onlineClient.js";
+import { useProfile } from "./profile.js";
 
 export type ConnStatus =
   | "idle"
@@ -20,6 +31,9 @@ export interface ShowdownSignal {
   baseRent: number;
   seq: number;
   id: number;
+  // the two duellists; every other player at the table only watches
+  payerId: PlayerId;
+  ownerId: PlayerId;
   // present only in the "result" phase: both reaction times + the outcome
   result?: ShowdownResultMessage;
 }
@@ -84,15 +98,21 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
       },
       onPartyOver: (over: FDOver) => set({ partyOver: over }),
       onLobby: (lobby: LobbyMessage) => set({ lobby, status: "waiting" }),
-      onShowdownStart: (baseRent: number) =>
-        set((s) => ({ showdown: { phase: "start", baseRent, seq: (s.showdown?.seq ?? 0) + 1, id: (s.showdown?.id ?? 0) + 1 } })),
-      onShowdownGo: () =>
+      onShowdownStart: (m: ShowdownStartMessage) =>
         set((s) => ({
-          showdown: { phase: "go", baseRent: s.showdown?.baseRent ?? 0, seq: (s.showdown?.seq ?? 0) + 1, id: s.showdown?.id ?? 0 },
+          showdown: {
+            phase: "start",
+            baseRent: m.baseRent,
+            payerId: m.payerId,
+            ownerId: m.ownerId,
+            seq: (s.showdown?.seq ?? 0) + 1,
+            id: (s.showdown?.id ?? 0) + 1,
+          },
         })),
+      onShowdownGo: () => set((s) => ({ showdown: s.showdown ? { ...s.showdown, phase: "go", seq: s.showdown.seq + 1 } : null })),
       onShowdownResult: (result: ShowdownResultMessage) =>
         set((s) => ({
-          showdown: { phase: "result", baseRent: s.showdown?.baseRent ?? 0, seq: (s.showdown?.seq ?? 0) + 1, id: s.showdown?.id ?? 0, result },
+          showdown: s.showdown ? { ...s.showdown, phase: "result", seq: s.showdown.seq + 1, result } : null,
         })),
       onError: (message: string) => set({ error: message, status: "error" }),
       onLeave: () => {
@@ -125,7 +145,7 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
       set({ status: "connecting", error: null, endsAt: null, lobby: null });
       client = new OnlineClient();
       try {
-        const roomId = await client.create(handlers(), durationSec, maxPlayers);
+        const roomId = await client.create(handlers(), durationSec, maxPlayers, me());
         set({ roomId, status: "waiting" });
       } catch (e) {
         set({ status: "error", error: errText(e) });
@@ -139,7 +159,7 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
       set({ status: "connecting", error: null });
       client = new OnlineClient();
       try {
-        await client.join(id, handlers());
+        await client.join(id, handlers(), me());
         set({ roomId: id, status: "waiting" });
       } catch (e) {
         set({ status: "error", error: errText(e) });
@@ -179,4 +199,10 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : "connection failed";
+}
+
+// the identity we introduce ourselves with: the persisted profile name + mascot
+function me(): { name: string; avatar: string } {
+  const p = useProfile.getState();
+  return { name: p.name.trim(), avatar: p.avatar };
 }
