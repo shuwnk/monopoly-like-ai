@@ -109,7 +109,8 @@
       "Bash(pkill -f \"tsx src/index.ts\")",
       "Bash(python3 -)",
       "Bash(awk 'NR>=1240 && NR<=1520' apps/web/src/components/BarnBrawlPractice.tsx)",
-      "Bash(awk 'NR>=815 && NR<=1060' apps/web/src/components/BarnBrawlPractice.tsx)"
+      "Bash(awk 'NR>=815 && NR<=1060' apps/web/src/components/BarnBrawlPractice.tsx)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('railway.json','utf8'\\)\\); JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('railway.json + package.json parse OK'\\)\")"
     ]
   }
 }

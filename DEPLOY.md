@@ -21,11 +21,17 @@ gh repo create party-monopoly --private --source=. --push   # or push to an exis
 ## 1. Server → Railway
 
 1. Go to <https://railway.app> → **New Project → Deploy from GitHub repo** → pick this repo.
-2. Railway detects the root **`Dockerfile`** and builds it. No build settings to change.
-   - It injects `PORT` automatically; the server already reads `process.env.PORT`.
-3. **Keep the service at 1 replica.** Rooms live in the process's memory (Colyseus runs on
-   its default local presence, no Redis), so a second replica gets its own set of rooms and
-   half your friends would join a room the other half can't see.
+2. **`railway.json` pins the build** to the root `Dockerfile`, the start command to the
+   server workspace, the health check to `/health`, and the service to 1 replica. Don't
+   override those in the dashboard.
+   - Without it Railway auto-detects a Node monorepo, runs the root `npm run build` — which
+     builds the **web** app — and then finds nothing to start. The symptom is a green build
+     and "Application failed to respond" on every request.
+   - It injects `PORT` automatically; the server reads `process.env.PORT` and binds `0.0.0.0`
+     (loopback-only would be unreachable from outside the container).
+3. **1 replica is not optional.** Rooms live in the process's memory (Colyseus runs on its
+   default local presence, no Redis), so a second replica gets its own set of rooms and half
+   your friends would join a room the other half can't see.
 4. When the deploy is green, open the service → **Settings → Networking → Generate Domain**.
    You'll get something like `party-monopoly-production.up.railway.app`.
 5. Your server URL for the web app is that domain with **`wss://`**:
