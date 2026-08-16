@@ -2,6 +2,19 @@ import { Server } from "colyseus";
 import { FloorDropRoom } from "./FloorDropRoom.js";
 import { GameRoom } from "./GameRoom.js";
 
+// A room callback that throws takes the whole process down with it, and a host
+// restarts the container with nothing in the log to say why. Print it, then exit
+// so the restart is at least explicable.
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaught exception:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[fatal] unhandled rejection:", err);
+  process.exit(1);
+});
+process.on("SIGTERM", () => console.log("[shutdown] SIGTERM received"));
+
 const port = Number(process.env.PORT) || 2567;
 // Bind every interface, not just loopback: a container host (Railway et al) routes
 // traffic in from outside the container and can't reach a loopback-only listener.

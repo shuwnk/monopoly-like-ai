@@ -111,7 +111,9 @@
       "Bash(awk 'NR>=1240 && NR<=1520' apps/web/src/components/BarnBrawlPractice.tsx)",
       "Bash(awk 'NR>=815 && NR<=1060' apps/web/src/components/BarnBrawlPractice.tsx)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('railway.json','utf8'\\)\\); JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('railway.json + package.json parse OK'\\)\")",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "Bash(SERVER_URL=\"wss://party-monopolyweb-production.up.railway.app\" node .lobbycheck.mjs)",
+      "Bash(SERVER_URL=\"wss://party-monopolyweb-production-c2e0.up.railway.app\" node .lobbycheck.mjs)"
     ]
   }
 }
