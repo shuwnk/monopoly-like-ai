@@ -13,7 +13,7 @@ import { OnlinePartyRound } from "./OnlinePartyRound.js";
 import { BuildPrompt, DebtPanel, airportTargets, copaTargets, sellTargets } from "./TurnChoices.js";
 
 export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
-  const { status, roomId, state, you, error, showdown, endsAt, lobby, party, startGame, sendAction, sendTap, dismissShowdown, disconnect } =
+  const { status, roomId, state, you, error, showdown, endsAt, lobby, party, looks, startGame, restartGame, sendAction, sendTap, dismissShowdown, disconnect } =
     useOnlineStore();
   const [sellMode, setSellMode] = useState(false);
   const [rules, setRules] = useState(false);
@@ -41,6 +41,8 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
   const active = state.players[state.activePlayerIndex];
   const yourTurn = !!active && active.id === you;
   const over = state.phase === "GAME_OVER";
+  // seat p0 hosts the room, and only the host may replay the match
+  const youHost = you === state.players[0]?.id;
   const inJail = !!active?.inJail;
   const canPayFine =
     yourTurn && inJail && state.phase === "AWAITING_ROLL" && !!active && active.money >= state.tunables.jail.fine;
@@ -64,13 +66,30 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
           : null;
 
   return (
-    <Frame onLeave={leave} onRules={() => setRules(true)}>
+    <Frame
+      onLeave={leave}
+      onRules={() => setRules(true)}
+      {...(youHost && !over
+        ? {
+            onRestart: () => {
+              if (window.confirm(t("Restart the match for everyone? All progress is lost."))) restartGame();
+            },
+          }
+        : {})}
+    >
       {rules && <HowToWin tunables={state.tunables} onClose={() => setRules(false)} />}
       <Status status={status} roomId={roomId} error={error} />
 
       {over ? (
         <div style={{ margin: "16px 0", padding: 12, background: "#1d3a1d", border: "1px solid #3c6", borderRadius: 4 }}>
           <strong>{t("Game over.")}</strong> {t("Winner:")} {state.players.find((p) => p.id === state.winnerId)?.name ?? state.winnerId}
+          {youHost ? (
+            <button className="primary" style={{ marginLeft: 14 }} onClick={restartGame}>
+              🔄 {t("Play again")}
+            </button>
+          ) : (
+            <span style={{ marginLeft: 14, opacity: 0.8, fontSize: 13 }}>{t("Waiting for the host to start a new game…")}</span>
+          )}
         </div>
       ) : (
         <div style={{ margin: "8px 0", display: "flex", alignItems: "center", gap: 14 }}>
@@ -87,7 +106,7 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
       )}
 
       <section style={{ margin: "16px 0" }}>
-        <Hud state={state} />
+        <Hud state={state} looks={looks} />
       </section>
 
       {!duelActive && (
@@ -285,14 +304,20 @@ function Lobby({
   );
 }
 
-function Frame({ children, onLeave, onRules }: { children: ReactNode; onLeave: () => void; onRules?: () => void }): JSX.Element {
+function Frame({ children, onLeave, onRules, onRestart }: { children: ReactNode; onLeave: () => void; onRules?: () => void; onRestart?: () => void }): JSX.Element {
+  const t = useT();
   return (
     <main style={{ minHeight: "100vh", padding: 24, maxWidth: 1440, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0, fontSize: 24 }}>Party Monopoly — Online</h1>
         <div style={{ display: "flex", gap: 8 }}>
-          {onRules && <button onClick={onRules}>How to win</button>}
-          <button onClick={onLeave}>Leave</button>
+          {onRestart && (
+            <button onClick={onRestart} title={t("Start the match over with the same players")}>
+              🔄 {t("Restart")}
+            </button>
+          )}
+          {onRules && <button onClick={onRules}>{t("How to win")}</button>}
+          <button onClick={onLeave}>{t("Leave")}</button>
         </div>
       </header>
       {children}

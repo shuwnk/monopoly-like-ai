@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { createInitialState, reduce, type GameAction, type GameState } from "@party-monopoly/engine";
+import { createInitialState, reduce, type GameAction, type GameEvent, type GameState } from "@party-monopoly/engine";
 import { DEFAULT_REFLEX_TAP_DUEL_CONFIG } from "@party-monopoly/minigame-harness";
 import type { ReflexInput } from "@party-monopoly/minigame-harness";
 import {
@@ -54,7 +54,8 @@ const DEFAULT_DURATION_S = 900; // 15 min
 // player-count bounds; the host picks how many the room seats
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 10;
-const HOST_SEAT = asPlayerId("p0"); // the first joiner is the host
+// how many recent events a room remembers for the admin panel
+const EVENT_LOG_MAX = 400;
 // a display name is shown to the whole table, so it gets trimmed and capped
 const MAX_NAME_LEN = 14;
 
@@ -87,6 +88,10 @@ export class GameRoom extends Room {
   private partyPlayers: PlayerId[] = []; // fighter id order -> board playerId (for the ranking)
   private partyOverTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingLeaves: PlayerId[] = []; // players who left mid-party; forfeited once it resolves
+  // recent events, newest last. Goes to stdout (so it shows up in the host's log
+  // stream) AND is kept here so the admin panel can show what just happened in a
+  // room without anyone needing shell access.
+  private events: { t: number; msg: string }[] = [];
 
   override onCreate(options: CreateRoomOptions | undefined) {
     const d = Number(options?.durationSec);
@@ -97,6 +102,7 @@ export class GameRoom extends Room {
     this.onMessage(C2S.tap, (client, msg: TapMessage) => this.onTap(client, msg));
     this.onMessage(C2S.start, (client) => this.onStartRequest(client));
     this.onMessage(C2S.sync, (client) => this.sendSnapshot(client));
+    this.onMessage(C2S.restart, (client) => this.onRestartRequest(client));
     // movement input during a party round (reuses the Floor Drop wire protocol)
     this.onMessage(FDClient.input, (client, msg: FDInput) => {
       const id = this.partySeat.get(client.sessionId);
@@ -115,14 +121,36 @@ export class GameRoom extends Room {
       name: this.uniqueName(cleanName(options?.name) || `Player ${this.seats.size}`),
       look: sanitizeLook(options?.look),
     });
+    this.note(`join ${seat} "${this.nameOf(seat)}" (${this.seats.size}/${this.maxClients})`);
     if (this.seats.size >= this.maxClients) this.startGame();
     else this.broadcastLobby();
   }
 
+  // Whoever holds the lowest occupied seat hosts. Pinning it to p0 meant that if
+  // the creator left the lobby, nobody remaining could start and the room was
+  // dead until everyone gave up and re-shared a new code.
+  private hostSeat(): PlayerId | null {
+    return [...this.seats.values()].sort()[0] ?? null;
+  }
+
   // host may start early once at least two players are in the lobby
   private onStartRequest(client: Client) {
-    if (this.started || this.seats.get(client.sessionId) !== HOST_SEAT || this.seats.size < MIN_PLAYERS) return;
+    if (this.started || this.seats.get(client.sessionId) !== this.hostSeat() || this.seats.size < MIN_PLAYERS) return;
     this.startGame();
+  }
+
+  // The host may replay the match with whoever is still in the room. Same seats,
+  // same names, fresh board and clock — nobody has to swap room codes to go again.
+  private onRestartRequest(client: Client) {
+    const seat = this.seats.get(client.sessionId);
+    if (!seat || seat !== this.hostSeat()) {
+      if (seat) this.note(`restart refused for ${seat} "${this.nameOf(seat)}" — not the host`);
+      return;
+    }
+    if (!this.started) return; // still in the lobby; there is nothing to restart
+    this.note(`host "${this.nameOf(seat)}" restarted the match`);
+    const res = this.resetMatch();
+    if (!res.ok) this.sendError(client, res.error ?? "could not restart");
   }
 
   override async onLeave(client: Client, consented: boolean) {
@@ -134,16 +162,41 @@ export class GameRoom extends Room {
     // round. Instead hand the fighter to a bot (so the sim finishes) and queue the leave to be
     // resolved once the round does. Party rounds are short, so no reconnection window here.
     if (this.partySim) {
+      // Hand the fighter to a bot so the round still finishes for everyone else.
       const fid = this.partySeat.get(client.sessionId);
       if (fid !== undefined) this.partySim.makeBot(fid);
       this.partySeat.delete(client.sessionId);
-      this.seats.delete(client.sessionId);
-      this.pendingLeaves.push(seat);
+
+      if (consented) {
+        this.note(`leave ${seat} "${this.nameOf(seat)}" during a party round (deliberate)`);
+        this.seats.delete(client.sessionId);
+        this.pendingLeaves.push(seat);
+        return;
+      }
+      // An accidental drop gets the same grace as one on the board. Party rounds
+      // are real-time minigames played on phones — backgrounding the browser for
+      // two seconds used to bankrupt you with no way back in.
+      this.note(`dropped ${seat} "${this.nameOf(seat)}" during a party round — holding the seat ${RECONNECT_WINDOW_S}s`);
+      try {
+        const back = await this.allowReconnection(client, RECONNECT_WINDOW_S);
+        this.seats.delete(client.sessionId);
+        this.seats.set(back.sessionId, seat);
+        this.note(`reconnected ${seat} "${this.nameOf(seat)}"`);
+        this.rejoinPartyRound(back, seat);
+        this.sendSnapshot(back);
+      } catch {
+        this.seats.delete(client.sessionId);
+        this.note(`${seat} "${this.nameOf(seat)}" never came back — forfeiting`);
+        // if the round is still running, defer; forfeiting mid-round aborts it
+        if (this.partySim) this.pendingLeaves.push(seat);
+        else this.forfeit(seat);
+      }
       return;
     }
 
     // still in the lobby: free the seat and refresh everyone (or close if empty)
     if (!this.started) {
+      this.note(`leave ${seat} "${this.nameOf(seat)}" from the lobby`);
       this.seats.delete(client.sessionId);
       this.profiles.delete(seat); // free the name too, so the reused seat re-registers
       if (this.seats.size === 0) this.disconnect();
@@ -153,19 +206,43 @@ export class GameRoom extends Room {
 
     // mid-game: a deliberate leave forfeits; a drop holds the seat for a window
     if (consented) {
+      this.note(`leave ${seat} "${this.nameOf(seat)}" mid-game (deliberate) — forfeiting`);
       this.seats.delete(client.sessionId);
       this.forfeit(seat);
       return;
     }
     try {
+      this.note(`dropped ${seat} "${this.nameOf(seat)}" — holding the seat ${RECONNECT_WINDOW_S}s`);
       const back = await this.allowReconnection(client, RECONNECT_WINDOW_S);
+      this.note(`reconnected ${seat} "${this.nameOf(seat)}"`);
       this.seats.delete(client.sessionId);
       this.seats.set(back.sessionId, seat);
       back.send(S2C.state, { state: this.game!, you: seat, looks: this.looks(), ...(this.endsAt !== null ? { endsAt: this.endsAt } : {}) } satisfies StateMessage<GameState>);
     } catch {
+      this.note(`${seat} "${this.nameOf(seat)}" never came back — forfeiting`);
       this.seats.delete(client.sessionId);
-      this.forfeit(seat);
+      // A forfeit lands on the engine immediately; if a party round happens to be
+      // running, that aborts it for the whole table over one absent player. Defer
+      // it the same way a mid-round leave does.
+      if (this.partySim) this.pendingLeaves.push(seat);
+      else this.forfeit(seat);
     }
+  }
+
+  // Put a reconnected player back into the round in progress — otherwise they sit
+  // on a frozen board until it ends, and their fighter never moves.
+  private rejoinPartyRound(client: Client, seat: PlayerId) {
+    if (!this.partySim) return;
+    const fid = this.partyPlayers.indexOf(seat);
+    if (fid < 0) return;
+    this.partySeat.set(client.sessionId, fid);
+    this.partySim.takeOver(fid);
+    const roster = this.partySim.fighters.map((f) => {
+      const owner = this.partyPlayers[f.id];
+      return { id: f.id, name: f.name, color: f.color, bot: f.isBot, look: owner ? this.lookOf(owner) : EMPTY_LOOK };
+    });
+    client.send(FDServer.start, { you: fid, players: roster } satisfies FDStart);
+    this.note(`${seat} "${this.nameOf(seat)}" rejoined the party round as fighter ${fid}`);
   }
 
   // lowest unused seat id (p0..pN-1), or null if the room is full
@@ -220,9 +297,9 @@ export class GameRoom extends Room {
     client.send(S2C.lobby, {
       joined: this.seats.size,
       capacity: this.maxClients,
-      host: seat === HOST_SEAT,
+      host: seat === this.hostSeat(),
       you: seat,
-      hostId: HOST_SEAT,
+      hostId: this.hostSeat() ?? seat,
       players: this.roster(),
     } satisfies LobbyMessage);
   }
@@ -247,10 +324,14 @@ export class GameRoom extends Room {
 
   // a seated player left mid-game: remove them from the game without stalling it
   private forfeit(seat: PlayerId) {
-    if (this.game && this.game.phase !== "GAME_OVER") this.applyAction({ type: "FORFEIT", playerId: seat });
+    if (this.game && this.game.phase !== "GAME_OVER") {
+      this.note(`forfeit ${seat} "${this.nameOf(seat)}"`);
+      this.applyAction({ type: "FORFEIT", playerId: seat });
+    }
   }
 
   override onDispose() {
+    this.note("room disposed");
     this.clearTimers();
   }
 
@@ -297,6 +378,7 @@ export class GameRoom extends Room {
     // start the host-authoritative countdown; at zero the richest player wins
     this.endsAt = Date.now() + this.durationSec * 1000;
     this.gameTimer = setTimeout(() => this.timeUp(), this.durationSec * 1000);
+    this.note(`game started — ${seated.length} players, ${this.durationSec}s: ${seated.map((id) => this.nameOf(id)).join(", ")}`);
     this.broadcastState();
     this.schedulePickFallback(); // arm the first player's turn timer
   }
@@ -304,8 +386,59 @@ export class GameRoom extends Room {
   private timeUp() {
     this.gameTimer = null;
     if (!this.game || this.game.phase === "GAME_OVER") return;
-    this.game = reduce(this.game, { type: "END_ON_TIME" }).state;
+    this.note("clock hit zero — ending on net worth");
+    const res = reduce(this.game, { type: "END_ON_TIME" });
+    for (const e of res.events) this.note(`  · ${this.describe(e)}`);
+    this.game = res.state;
     this.broadcastState();
+  }
+
+  // Render one engine event as a line. Names rather than seat ids where possible —
+  // when reading a log you think in players, not indices.
+  private describe(e: GameEvent): string {
+    const who = (id: PlayerId): string => `${id} "${this.nameOf(id)}"`;
+    const sq = (id: number): string => `${id} (${this.game?.board[id]?.name ?? "?"})`;
+    switch (e.type) {
+      case "DICE_ROLLED":
+        return `${who(e.playerId)} rolled ${e.dice.join("+")} = ${e.dice.reduce((a, b) => a + b, 0)}`;
+      case "PLAYER_MOVED":
+        return `${who(e.playerId)} moved to ${sq(e.to)}${e.passedGo ? " (passed GO)" : ""}`;
+      case "PROPERTY_BOUGHT":
+        return `${who(e.playerId)} bought ${sq(e.propertyId)} for ${e.price}`;
+      case "HOUSE_BUILT":
+        return `${who(e.playerId)} built level ${e.level} on ${sq(e.squareId)} for ${e.cost}`;
+      case "TILE_SOLD":
+        return `${who(e.playerId)} sold ${e.wasHouse ? "a house on " : ""}${sq(e.squareId)} for ${e.refund}`;
+      case "DEBT_PAID":
+        return `${who(e.playerId)} paid a debt of ${e.amount}`;
+      case "WORLD_CUP_BOOST":
+        return `${who(e.playerId)} Copa-boosted ${sq(e.squareId)} ×${e.multiplier}`;
+      case "AIRPORT_TRAVEL":
+        return `${who(e.playerId)} flew to ${sq(e.to)}`;
+      case "MINIGAME_REQUESTED":
+        return `minigame requested: ${e.request.minigameId} (${e.request.participants.map((p) => p.playerId).join(" vs ")})`;
+      case "RENT_PAID":
+        return `${who(e.from)} paid rent ${e.amount} to ${who(e.to)} (×${e.multiplier})`;
+      case "PARTY_ROUND_PAYOUT":
+        return `${who(e.playerId)} placed #${e.place} in the party round → ${e.amount}`;
+      case "SENT_TO_JAIL":
+        return `${who(e.playerId)} was sent to jail`;
+      case "PLAYER_BANKRUPT":
+        return `${who(e.playerId)} went BANKRUPT (released ${e.releasedProperties.length} properties)`;
+      case "TURN_ENDED":
+        return `turn ended → ${who(e.nextPlayerId)}`;
+      case "GAME_OVER":
+        return `GAME OVER — winner ${who(e.winnerId)}`;
+    }
+  }
+
+  // One line per notable thing. Prefixed with the room id because a busy server
+  // interleaves several games in the same stream.
+  private note(msg: string) {
+    const at = Date.now();
+    this.events.push({ t: at, msg });
+    if (this.events.length > EVENT_LOG_MAX) this.events.shift();
+    console.log(`[room ${this.roomId}] ${msg}`);
   }
 
   // --- admin (reached only through the token-guarded /admin API in admin.ts) ---
@@ -326,13 +459,14 @@ export class GameRoom extends Room {
         id,
         name: this.nameOf(id),
         look: this.lookOf(id),
-        connected: [...this.seats.values()].includes(id),
+        connected: this.clients.some((c) => this.seats.get(c.sessionId) === id),
       })),
       looks: this.looks(),
       // what the room is waiting on — the usual reason a game looks stuck
       waitingOn: this.game && this.game.phase !== "GAME_OVER" ? (this.game.players[this.game.activePlayerIndex]?.id ?? null) : null,
       duel: this.showdownArmed ? this.duellists : null,
       partyRound: !!this.partySim,
+      events: this.events,
       state: this.game,
     };
   }
@@ -340,6 +474,7 @@ export class GameRoom extends Room {
   // Operator actions for a game that has gone wrong. Deliberately expressed in
   // terms the engine already validates — nothing here writes state directly.
   adminAction(type: string, arg?: string) {
+    this.note(`ADMIN action "${type}"${arg ? ` (${arg})` : ""}`);
     switch (type) {
       case "nudge":
         // play the current player's turn for them — the same fallback a timeout
@@ -365,7 +500,7 @@ export class GameRoom extends Room {
 
   // Restart the match with the players who are still here, keeping the room and
   // everyone's connection. The clock restarts too.
-  private resetMatch() {
+  private resetMatch(): { ok: boolean; error?: string; players?: number } {
     const seated = [...this.seats.values()].sort();
     if (seated.length < MIN_PLAYERS) return { ok: false, error: "not enough players to restart" };
     this.clearTimers();
@@ -393,12 +528,16 @@ export class GameRoom extends Room {
 
     const type = msg.action.type;
     if (!isLegalAction(this.game, you, type)) {
+      // the usual cause is a stale client UI, but it is also what a tampered
+      // client trips over — either way it is worth seeing
+      this.note(`REJECTED ${type} from ${you} "${this.nameOf(you)}" in phase ${this.game.phase}`);
       this.sendError(client, "illegal action");
       return;
     }
 
     const action = this.toGameAction(msg.action, you);
     if (!action) {
+      this.note(`MALFORMED ${type} from ${you} "${this.nameOf(you)}"`);
       this.sendError(client, "malformed action");
       return;
     }
@@ -426,7 +565,15 @@ export class GameRoom extends Room {
   // showdown; a Copa/Aeroporto pause arms the pick-timeout so a silent player
   // can't stall the room. Every state change funnels through here.
   private applyAction(action: GameAction) {
-    this.game = reduce(this.game!, action).state;
+    const before = this.game!;
+    const res = reduce(before, action);
+    this.game = res.state;
+    // The engine tells us exactly what happened — dice, rent, builds, bankruptcies.
+    // Logging its own event stream means the room log IS the game history, rather
+    // than a guess reconstructed from state diffs.
+    this.note(`action ${action.type}${"playerId" in action ? ` by ${String(action.playerId)}` : ""}`);
+    for (const e of res.events) this.note(`  · ${this.describe(e)}`);
+    if (before.phase !== res.state.phase) this.note(`  phase ${before.phase} → ${res.state.phase}`);
     this.broadcastState();
     const phase = this.game.phase;
 
@@ -477,6 +624,8 @@ export class GameRoom extends Room {
     this.clearPickTimer();
     const game = this.game;
     if (!game) return;
+    const who = game.players[game.activePlayerIndex];
+    this.note(`timeout in ${game.phase} — auto-playing for ${who?.id ?? "?"} "${who?.name ?? "?"}"`);
     if (game.phase === "AWAITING_ROLL") {
       this.applyAction({ type: "ROLL_DICE" }); // default: take the turn for them
     } else if (game.phase === "AWAITING_BUY_DECISION") {
@@ -509,6 +658,7 @@ export class GameRoom extends Room {
     this.showdownArmed = true;
     this.duellists = [payer.playerId, owner.playerId];
     const baseRent = game.pendingMinigame.context.stakeData.baseRent;
+    this.note(`showdown armed: ${this.nameOf(payer.playerId)} (payer) vs ${this.nameOf(owner.playerId)} (owner), base rent ${baseRent}`);
     this.broadcast(S2C.showdownStart, {
       baseRent,
       payerId: payer.playerId,
@@ -530,8 +680,12 @@ export class GameRoom extends Room {
     // only the payer and the owner duel — a spectator's tap is ignored, and the
     // duel resolves as soon as those two have answered (not the whole table,
     // which at 3+ players would never happen and always burn the tap timeout)
-    if (!you || !this.duellists.includes(you) || this.taps.has(you)) return;
+    if (!you || !this.duellists.includes(you) || this.taps.has(you)) {
+      if (you && !this.duellists.includes(you)) this.note(`tap from ${you} "${this.nameOf(you)}" IGNORED — not a duellist`);
+      return;
+    }
 
+    this.note(`tap from ${you} "${this.nameOf(you)}": ${msg.falseStart ? "false start" : `${Math.round(msg.reactionMs ?? -1)}ms`}`);
     this.taps.set(you, { reactionMs: msg.reactionMs, falseStart: msg.falseStart });
     if (this.duellists.every((id) => this.taps.has(id))) this.resolveShowdown();
   }
@@ -559,7 +713,12 @@ export class GameRoom extends Room {
       outcome: res.result.outcome,
       aborted: res.result.status === "ABORTED",
     } satisfies ShowdownResultMessage);
-    this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result: res.result }).state;
+    this.note(
+      `showdown result: ${this.nameOf(res.payerId)} ${fmtTap(res.payerTap)} vs ${this.nameOf(res.ownerId)} ${fmtTap(res.ownerTap)} → ${res.result.outcome}${res.result.status === "ABORTED" ? " (aborted)" : ""}`,
+    );
+    const sub = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result: res.result });
+    for (const e of sub.events) this.note(`  · ${this.describe(e)}`);
+    this.game = sub.state;
     this.broadcastState();
     // paying rent can push the payer into debt (or any other pausable phase) —
     // arm the fallback so a silent/dropped player there can't stall the room
@@ -595,6 +754,7 @@ export class GameRoom extends Room {
         c.send(FDServer.start, { you: fid, players: roster } satisfies FDStart);
       }
     }
+    this.note(`party round started with ${roster.length} fighters (${this.partyPlayers.map((id) => this.nameOf(id)).join(", ")})`);
     this.setSimulationInterval((dtMs) => this.partyTick(dtMs), PARTY_TICK_MS);
   }
 
@@ -635,9 +795,17 @@ export class GameRoom extends Room {
         .map((f) => this.partyPlayers[f.id])
         .filter((id): id is PlayerId => id !== undefined);
       const result: MinigameResult = { minigameId: game.pendingMinigame.minigameId, status: "COMPLETED", outcome: "P0_WIN", ranking };
-      this.game = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result }).state;
+      this.note(`party round finished — order: ${ranking.map((id, i) => `#${i + 1} ${this.nameOf(id)}`).join(", ")}`);
+      const sub = reduce(game, { type: "SUBMIT_MINIGAME_RESULT", result });
+      for (const e of sub.events) this.note(`  · ${this.describe(e)}`);
+      this.game = sub.state;
       this.broadcastState();
       this.schedulePickFallback(); // arm the resumed player's turn timer
+    } else if (this.game) {
+      // aborted out from under the sim — still push a state so nobody is left
+      // looking at the party round
+      this.note("party round resolved but the board had already moved on — resyncing clients");
+      this.broadcastState();
     }
     this.flushPendingLeaves();
   }
@@ -658,6 +826,10 @@ export class GameRoom extends Room {
         places: sim.fighters.map((f) => [f.id, f.place === 0 ? 1 : f.place] as const),
       } satisfies FDOver);
     }
+    // The client only leaves the party view when a board state arrives. Without
+    // this, an aborted round left everyone stuck on the placement screen with a
+    // game running behind it.
+    if (this.game) this.broadcastState();
     this.flushPendingLeaves();
   }
 
@@ -691,4 +863,11 @@ function cleanName(raw: unknown): string {
   if (typeof raw !== "string") return "";
   // eslint-disable-next-line no-control-regex
   return raw.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LEN);
+}
+
+// a tap in words, for the log
+function fmtTap(t: ReflexInput): string {
+  if (t.falseStart) return "jumped early";
+  if (t.reactionMs === null) return "no tap";
+  return `${Math.round(t.reactionMs)}ms`;
 }

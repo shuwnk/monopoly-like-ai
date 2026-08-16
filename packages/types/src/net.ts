@@ -11,6 +11,7 @@ export const C2S = {
   action: "action",
   tap: "tap",
   start: "start", // host asks to start the game before the room is full
+  restart: "restart", // host asks to replay the match with the same players
   // "I'm listening now" — sent once the client has its handlers attached, so the
   // server re-sends the lobby (or the live state). Without it a client can miss
   // the message its own join triggered, since that is sent before the join

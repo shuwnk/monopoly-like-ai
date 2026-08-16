@@ -31,9 +31,11 @@ interface Snapshot {
   endsAt: number | null;
   phase: string;
   seats: { id: string; name: string; look: PlayerLook }[];
+  looks: Record<string, PlayerLook>;
   waitingOn: string | null;
   duel: string[] | null;
   partyRound: boolean;
+  events: { t: number; msg: string }[];
   state: GameState | null;
   error?: string;
 }
@@ -217,9 +219,56 @@ export function AdminPanel({ onLeave }: { onLeave: () => void }): JSX.Element {
                 </button>
               </div>
 
+              {/* the room's own history — what actually happened, newest last */}
+              <details open style={{ marginBottom: 16 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: "var(--muted)" }}>
+                  Event log ({snap.events?.length ?? 0})
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const text = (snap.events ?? []).map((v) => `${new Date(v.t).toISOString()}  ${v.msg}`).join("\n");
+                      const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `room-${snap.roomId}.log`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    style={{ marginLeft: 10, fontSize: 11, padding: "2px 8px" }}
+                  >
+                    download
+                  </button>
+                </summary>
+                <div
+                  ref={(el) => {
+                    if (el) el.scrollTop = el.scrollHeight; // keep the newest line in view
+                  }}
+                  style={{
+                    maxHeight: 260,
+                    overflowY: "auto",
+                    background: "#0d1016",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: 10,
+                    fontFamily: "monospace",
+                    fontSize: 11.5,
+                    lineHeight: 1.5,
+                    marginTop: 8,
+                  }}
+                >
+                  {(snap.events ?? []).map((v, i) => (
+                    <div key={i} style={{ whiteSpace: "pre-wrap", color: lineColour(v.msg) }}>
+                      <span style={{ color: "#5a6472" }}>{new Date(v.t).toLocaleTimeString()} </span>
+                      {v.msg}
+                    </div>
+                  ))}
+                  {!snap.events?.length && <span style={{ color: "var(--muted)" }}>Nothing yet.</span>}
+                </div>
+              </details>
+
               {snap.state ? (
                 <>
-                  <Hud state={snap.state} />
+                  <Hud state={snap.state} looks={snap.looks} />
                   <div style={{ marginTop: 12 }}>
                     <IsoBoard state={snap.state} />
                   </div>
@@ -256,6 +305,15 @@ function Frame({ children, onLeave, onSignOut }: { children: ReactNode; onLeave:
       {children}
     </main>
   );
+}
+
+// make the lines that matter jump out of a wall of monospace
+function lineColour(msg: string): string {
+  if (msg.includes("REJECTED") || msg.includes("MALFORMED") || msg.includes("BANKRUPT")) return "#ff9a9a";
+  if (msg.includes("ADMIN") || msg.includes("timeout") || msg.includes("forfeit") || msg.includes("IGNORED")) return "#ffcf8c";
+  if (msg.startsWith("  · ")) return "#9fb3c8";
+  if (msg.includes("GAME OVER") || msg.includes("game started")) return "#8ee6a8";
+  return "#dfe6f0";
 }
 
 function timeAgo(iso: string): string {

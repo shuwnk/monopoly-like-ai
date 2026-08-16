@@ -1,4 +1,4 @@
-import type { MinigameRequest, PlayerId } from "@party-monopoly/types";
+import type { MinigameRequest, PlayerId, PartyGame } from "@party-monopoly/types";
 import type { RngState } from "./rng.js";
 import type { GameTunables } from "./tunables.js";
 
@@ -78,6 +78,8 @@ export interface GameState {
   // laps completed; the round cap force-ends the game on net worth
   readonly round: number;
   readonly pendingMinigame: MinigameRequest | null;
+  // which party minigame ran last, so the next draw can avoid repeating it
+  readonly lastPartyGame: PartyGame | null;
   // a debt the active player must cover by selling before the game continues;
   // creditorIdx null means the money is owed to the bank. null = no debt pending.
   readonly pendingDebt: { readonly amount: number; readonly creditorIdx: number | null } | null;

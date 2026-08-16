@@ -14,6 +14,7 @@ import {
   type LobbyMessage,
   type PlayerId,
   type PlayerIdentity,
+  type PlayerLook,
   type ShowdownResultMessage,
   type ShowdownStartMessage,
   type StateMessage,
@@ -29,7 +30,7 @@ const ROOM = "game";
 const TOKEN_KEY = "pm-reconnect";
 
 export interface OnlineHandlers {
-  onState: (state: GameState, you: PlayerId, endsAt?: number) => void;
+  onState: (state: GameState, you: PlayerId, endsAt?: number, looks?: Readonly<Record<string, PlayerLook>>) => void;
   onLobby: (lobby: LobbyMessage) => void;
   onShowdownStart: (msg: ShowdownStartMessage) => void;
   onShowdownGo: () => void;
@@ -96,6 +97,10 @@ export class OnlineClient {
     this.room?.send(C2S.start, {});
   }
 
+  sendRestart(): void {
+    this.room?.send(C2S.restart, {});
+  }
+
   async join(roomId: string, h: OnlineHandlers, me: PlayerIdentity): Promise<void> {
     this.room = await this.client.joinById(roomId, identity(me));
     this.setToken(this.room.reconnectionToken);
@@ -145,7 +150,7 @@ export class OnlineClient {
 
   private wire(h: OnlineHandlers): void {
     const room = this.room!;
-    room.onMessage(S2C.state, (m: StateMessage<GameState>) => h.onState(m.state, m.you, m.endsAt));
+    room.onMessage(S2C.state, (m: StateMessage<GameState>) => h.onState(m.state, m.you, m.endsAt, m.looks));
     room.onMessage(S2C.lobby, (m: LobbyMessage) => h.onLobby(m));
     room.onMessage(S2C.showdownStart, (m: ShowdownStartMessage) => h.onShowdownStart(m));
     room.onMessage(S2C.showdownGo, () => h.onShowdownGo());

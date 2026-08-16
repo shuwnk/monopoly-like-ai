@@ -1,8 +1,9 @@
 import { netWorth, type GameState, type PlayerState } from "@party-monopoly/engine";
 import { CURRENCY, groupColor, playerColor, playerTag } from "../theme.js";
+import { resolveLook } from "../game/avatars.js";
 import { Dice } from "./Dice.js";
 
-export function Hud({ state }: { state: GameState }): JSX.Element {
+export function Hud({ state, looks }: { state: GameState; looks?: Readonly<Record<string, { av: string; color?: string; hat?: string }>> }): JSX.Element {
   const cap = state.tunables.roundCap;
   const byNetWorth = state.tunables.tiebreakMetric === "NET_WORTH";
   // who's ahead right now — only meaningful with more than one player still in
@@ -34,7 +35,7 @@ export function Hud({ state }: { state: GameState }): JSX.Element {
           <PlayerCard
             key={p.id}
             player={p}
-            idx={i}
+            idx={i} look={looks?.[p.id]}
             state={state}
             active={i === state.activePlayerIndex}
             leader={p.id === leaderId}
@@ -51,14 +52,18 @@ function PlayerCard({
   state,
   active,
   leader,
+  look,
 }: {
   player: PlayerState;
   idx: number;
   state: GameState;
   active: boolean;
   leader: boolean;
+  look?: { av: string; color?: string; hat?: string } | undefined;
 }): JSX.Element {
-  const color = playerColor(idx);
+  // show the colour the player actually chose; the positional palette is only a
+  // fallback for players who never picked one (and for local games)
+  const color = look?.color || (look ? resolveLook(look).body : "") || playerColor(idx);
   const owned = Object.entries(state.ownership)
     .filter(([, ownerId]) => ownerId === player.id)
     .map(([sq]) => groupColor(state.board[Number(sq)]?.property?.group))

@@ -71,7 +71,7 @@ export const DEFAULT_TUNABLES: GameTunables = {
   // of price, and the round cap guarantees a finish. tuned "gentle": ~30% of
   // games end by knockout, the rest on net worth at the cap (sim, 4p).
   startingMoney: 100000,
-  passGoSalary: 7500,
+  passGoSalary: 15000,
   taxAmount: 12000,
   boardSize: 40,
   diceCount: 2,
@@ -105,9 +105,16 @@ export const DEFAULT_TUNABLES: GameTunables = {
   requireMonopolyToBuild: false,
   sellFraction: 1.0, // full price back on a sale
   worldCupMultiplier: 2,
-  // reach R$160k net worth (1.6x the 100k start) to win outright. sim: ~half of
-  // 4p games are won this way, the rest on the clock. 0 disables the wealth win.
-  netWorthGoal: 160000,
+  // Reach this net worth to win outright; 0 disables the wealth win.
+  // Raised 160k → 190k when the GO salary doubled to 15k. The salary is the only
+  // large faucet and nothing else scales with it, so leaving the goal alone made
+  // games 29% shorter and — the part that matters for a party game — cut rent
+  // showdowns by 36% and builds by 30%, because neither has time to happen.
+  // 190k restores the original pacing exactly (sim, 250 games, 4p):
+  //   7.5k salary / 160k goal → median 62 turns, 25.2 showdowns, 3.7 builds
+  //    15k salary / 190k goal → median 62 turns, 27.4 showdowns, 4.8 builds
+  // Same length, slightly MORE of the fun, and players feel richer throughout.
+  netWorthGoal: 190000,
   roundCap: 30,
   tiebreakMetric: "NET_WORTH",
   // a party round every 2 laps; 1st place earns ~1/3 of a lap salary, scaling down to nothing

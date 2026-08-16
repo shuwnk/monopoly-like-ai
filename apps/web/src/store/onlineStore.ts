@@ -9,6 +9,7 @@ import type {
   PlayerId,
   ShowdownResultMessage,
   ShowdownStartMessage,
+  PlayerLook,
 } from "@party-monopoly/types";
 import { create } from "zustand";
 import { OnlineClient } from "../net/onlineClient.js";
@@ -54,6 +55,7 @@ interface OnlineStore {
   showdown: ShowdownSignal | null;
   endsAt: number | null; // epoch ms the countdown hits zero
   lobby: LobbyMessage | null; // pre-game: who's joined and whether you host
+  looks: Readonly<Record<string, PlayerLook>>; // every seated player's chosen avatar/colour/hat
   party: PartyInfo | null; // set while a party round is live (renders the FFA minigame)
   partyOver: FDOver | null; // final placements once the round ends
   partySnap: { current: FDSnapshot | null }; // stable ref, mutated per tick (non-reactive)
@@ -62,6 +64,7 @@ interface OnlineStore {
   joinRoom: (id: string) => Promise<void>;
   restoreSession: () => Promise<boolean>; // resume after a page reload; false if nothing to resume
   startGame: () => void;
+  restartGame: () => void;
   sendAction: (type: ClientActionType, squareId?: number) => void;
   sendTap: (reactionMs: number | null, falseStart: boolean) => void;
   sendPartyInput: (dx: number, dy: number) => void;
@@ -70,6 +73,21 @@ interface OnlineStore {
 }
 
 let client: OnlineClient | null = null;
+// Safety net for the duel reveal. The duel view dismisses itself after a beat,
+// but its timer dies with it — and OnlineGame unmounts the duel as soon as a
+// party round starts. A reveal left standing hides every turn button, which
+// stranded a player mid-game ("couldn't roll the dice on my turn"). The store
+// therefore drops it on a timer of its own, which no view can cancel.
+const REVEAL_MAX_MS = 4000;
+// how long to keep retrying a dropped connection — the server holds a seat for
+// 30s, so give up only once it really is gone
+const RECONNECT_FOR_MS = 27000;
+const RECONNECT_EVERY_MS = 2000;
+let revealTimer: ReturnType<typeof setTimeout> | null = null;
+function clearReveal(): void {
+  if (revealTimer) clearTimeout(revealTimer);
+  revealTimer = null;
+}
 // set when the player leaves on purpose, so a real drop isn't confused for it
 let leaving = false;
 
@@ -80,18 +98,35 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
 
   function handlers() {
     return {
-      onState: (state: GameState, you: PlayerId, endsAt?: number) => {
+      onState: (state: GameState, you: PlayerId, endsAt?: number, looks?: Readonly<Record<string, PlayerLook>>) => {
         // the resolved state arrives right after showdown:result; keep the reveal
         // up (the duel view dismisses it after a beat) but otherwise clear it. A board
         // state also arrives when a party round resolves → clear the party view.
         if (state.phase === "GAME_OVER") OnlineClient.clearStoredSession(); // nothing to resume into
         const playing = get().status === "left" ? "left" : "playing";
-        const showdown = get().showdown?.phase === "result" ? get().showdown : null;
-        set({ state, you, status: playing, showdown, lobby: null, party: null, partyOver: null, ...(endsAt !== undefined ? { endsAt } : {}) });
+        // Keep the duel signal alive while the board says the duel still is. A
+        // bystander leaving mid-duel re-broadcasts state, and unconditionally
+        // clearing here stripped the tap UI from both duellists — they timed out
+        // and rent was charged flat with no reveal.
+        const sig = get().showdown;
+        const showdown = sig && (sig.phase === "result" || state.phase === "RENT_SHOWDOWN") ? sig : null;
+        set({
+          state,
+          you,
+          status: playing,
+          showdown,
+          lobby: null,
+          party: null,
+          partyOver: null,
+          ...(looks ? { looks } : {}),
+          ...(endsAt !== undefined ? { endsAt } : {}),
+        });
       },
       onPartyStart: (msg: FDStart) => {
         partySnap.current = null;
-        set({ party: { you: msg.you, roster: msg.players }, partyOver: null });
+        // a party round takes over the screen, so any duel reveal is over
+        clearReveal();
+        set({ party: { you: msg.you, roster: msg.players }, partyOver: null, showdown: null });
       },
       onPartySnap: (snap: FDSnapshot) => {
         partySnap.current = snap; // non-reactive: read by the renderer's rAF loop
@@ -110,10 +145,16 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
           },
         })),
       onShowdownGo: () => set((s) => ({ showdown: s.showdown ? { ...s.showdown, phase: "go", seq: s.showdown.seq + 1 } : null })),
-      onShowdownResult: (result: ShowdownResultMessage) =>
+      onShowdownResult: (result: ShowdownResultMessage) => {
         set((s) => ({
           showdown: s.showdown ? { ...s.showdown, phase: "result", seq: s.showdown.seq + 1, result } : null,
-        })),
+        }));
+        clearReveal();
+        revealTimer = setTimeout(() => {
+          revealTimer = null;
+          if (get().showdown?.phase === "result") set({ showdown: null });
+        }, REVEAL_MAX_MS);
+      },
       onError: (message: string) => set({ error: message, status: "error" }),
       onLeave: () => {
         if (leaving || !client) return;
@@ -122,7 +163,21 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
           return;
         }
         set({ status: "reconnecting" });
-        client.reconnect(handlers()).catch(() => set({ status: "left" }));
+        // Keep trying for as long as the server holds the seat. One immediate
+        // attempt fails while the network is still down, so a brief wifi blip
+        // used to read as "you're out" even though the seat was still there.
+        const started = Date.now();
+        const attempt = (): void => {
+          if (leaving || !client) return;
+          client.reconnect(handlers()).catch(() => {
+            if (Date.now() - started > RECONNECT_FOR_MS) {
+              set({ status: "left" });
+              return;
+            }
+            setTimeout(attempt, RECONNECT_EVERY_MS);
+          });
+        };
+        attempt();
       },
     };
   }
@@ -135,6 +190,7 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
     error: null,
     showdown: null,
     endsAt: null,
+    looks: {},
     lobby: null,
     party: null,
     partyOver: null,
@@ -153,6 +209,7 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
     },
 
     startGame: () => client?.sendStart(),
+    restartGame: () => client?.sendRestart(),
 
     joinRoom: async (id) => {
       leaving = false;
@@ -189,10 +246,11 @@ export const useOnlineStore = create<OnlineStore>((set, get) => {
 
     disconnect: () => {
       leaving = true;
+      clearReveal();
       client?.leave();
       client = null;
       partySnap.current = null;
-      set({ status: "idle", roomId: null, state: null, you: null, error: null, showdown: null, endsAt: null, lobby: null, party: null, partyOver: null });
+      set({ status: "idle", roomId: null, state: null, you: null, error: null, showdown: null, endsAt: null, looks: {}, lobby: null, party: null, partyOver: null });
     },
   };
 });

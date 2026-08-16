@@ -48,6 +48,7 @@ export function createInitialState(config: NewGameConfig): GameState {
     doublesCount: 0,
     round: 0,
     pendingMinigame: null,
+    lastPartyGame: null,
     pendingDebt: null,
     winnerId: null,
   };

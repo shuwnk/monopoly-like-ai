@@ -81,6 +81,16 @@ export class FloorDropSim {
     if (f) f.isBot = true;
   }
 
+  // …and a returning human takes it back, so a reconnect mid-round means playing
+  // again rather than watching a bot finish for you
+  takeOver(id: number): void {
+    const f = this.fighters.find((x) => x.id === id);
+    if (f) {
+      f.isBot = false;
+      f.input = { dx: 0, dy: 0 };
+    }
+  }
+
   private aliveCount(): number {
     return this.fighters.filter((f) => f.state === 0).length;
   }

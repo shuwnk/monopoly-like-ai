@@ -559,7 +559,12 @@ const PARTY_MAX_PLAYERS = 4;
 // best-to-worst placement comes back in the result's `ranking`.
 function beginPartyRound(state: GameState, events: GameEvent[]): ReducerResult<GameState> {
   const seated = state.players.filter((p) => !p.bankrupt).slice(0, PARTY_MAX_PLAYERS);
-  const games = state.tunables.partyGames.length > 0 ? state.tunables.partyGames : PARTY_GAMES;
+  const all = state.tunables.partyGames.length > 0 ? state.tunables.partyGames : PARTY_GAMES;
+  // Don't run the same minigame twice in a row — back-to-back repeats make the
+  // party rounds feel like filler. Only possible when there's more than one to
+  // choose from; with a single configured game we obviously replay it.
+  const fresh = all.filter((g) => g !== state.lastPartyGame);
+  const games = fresh.length > 0 ? fresh : all;
   const pick = nextInt(state.rng, 0, games.length - 1);
   const game = games[pick.value]!;
   const request: MinigameRequest = {
@@ -569,7 +574,7 @@ function beginPartyRound(state: GameState, events: GameEvent[]): ReducerResult<G
     config: {},
   };
   return {
-    state: { ...state, rng: pick.next, phase: "PARTY_ROUND", pendingMinigame: request },
+    state: { ...state, rng: pick.next, phase: "PARTY_ROUND", pendingMinigame: request, lastPartyGame: game },
     events: [...events, { type: "MINIGAME_REQUESTED", request }],
   };
 }
