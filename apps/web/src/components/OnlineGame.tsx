@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useT } from "../i18n/index.js";
 import type { LobbyMessage } from "@party-monopoly/types";
 import { useOnlineStore } from "../store/onlineStore.js";
 import { CURRENCY } from "../theme.js";
@@ -16,6 +17,7 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
     useOnlineStore();
   const [sellMode, setSellMode] = useState(false);
   const [rules, setRules] = useState(false);
+  const t = useT();
 
   function leave(): void {
     disconnect();
@@ -68,12 +70,12 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
 
       {over ? (
         <div style={{ margin: "16px 0", padding: 12, background: "#1d3a1d", border: "1px solid #3c6", borderRadius: 4 }}>
-          <strong>Game over.</strong> Winner: {state.players.find((p) => p.id === state.winnerId)?.name ?? state.winnerId}
+          <strong>{t("Game over.")}</strong> {t("Winner:")} {state.players.find((p) => p.id === state.winnerId)?.name ?? state.winnerId}
         </div>
       ) : (
         <div style={{ margin: "8px 0", display: "flex", alignItems: "center", gap: 14 }}>
           <span style={{ opacity: 0.85 }}>
-            {duelActive ? "Rent showdown in progress…" : yourTurn ? "Your turn." : `Waiting for ${active?.name ?? "opponent"}…`}
+            {duelActive ? t("Rent showdown in progress…") : yourTurn ? t("Your turn.") : t("Waiting for {who}…", { who: active?.name ?? t("opponent") })}
           </span>
           {state.tunables.netWorthGoal > 0 && (
             <span style={{ fontSize: 12, color: "var(--muted)" }}>
@@ -91,7 +93,7 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
       {!duelActive && (
         <section style={{ display: "flex", gap: 8, margin: "16px 0", flexWrap: "wrap" }}>
           <button className="primary" disabled={over || !yourTurn || state.phase !== "AWAITING_ROLL"} onClick={() => sendAction("ROLL_DICE")}>
-            {inJail ? "Roll (try to escape jail)" : "Roll dice"}
+            {inJail ? t("Roll (try to escape jail)") : t("Roll dice")}
           </button>
           <button disabled={!canPayFine} onClick={() => sendAction("PAY_JAIL_FINE")}>
             Pay fine (R${state.tunables.jail.fine})
@@ -100,19 +102,19 @@ export function OnlineGame({ onLeave }: { onLeave: () => void }): JSX.Element {
             disabled={over || !yourTurn || state.phase !== "AWAITING_BUY_DECISION"}
             onClick={() => sendAction("BUY_PROPERTY")}
           >
-            Buy
+            {t("Buy")}
           </button>
           <button
             disabled={over || !yourTurn || state.phase !== "AWAITING_BUY_DECISION"}
             onClick={() => sendAction("DECLINE_BUY")}
           >
-            Decline
+            {t("Decline")}
           </button>
           <button disabled={over || !yourTurn || state.phase !== "TURN_END"} onClick={() => sendAction("END_TURN")}>
-            End turn
+            {t("End turn")}
           </button>
           {yourTurn && active && state.phase === "AWAITING_ROLL" && sellTargets(state, active.id).size > 0 && (
-            <button onClick={() => setSellMode((v) => !v)}>{sellMode ? "Done selling" : "Sell property"}</button>
+            <button onClick={() => setSellMode((v) => !v)}>{sellMode ? t("Done selling") : t("Sell property")}</button>
           )}
         </section>
       )}
@@ -186,6 +188,7 @@ function Lobby({
   onStart: () => void;
   onRules: () => void;
 }): JSX.Element {
+  const t = useT();
   const [copied, setCopied] = useState<"link" | "code" | null>(null);
   const link = roomId ? `${window.location.origin}${window.location.pathname}?room=${roomId}` : "";
   const empty = Math.max(0, lobby.capacity - lobby.players.length);
@@ -204,10 +207,10 @@ function Lobby({
     <section style={{ margin: "16px 0", padding: 16, borderRadius: "var(--radius)", background: "var(--panel-2)", border: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 800 }}>
-          {lobby.joined} / {lobby.capacity} players in
+          {t("{a} / {b} players in", { a: lobby.joined, b: lobby.capacity })}
         </div>
         <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={onRules}>
-          How to win
+          {t("How to win")}
         </button>
       </div>
 
@@ -250,7 +253,7 @@ function Lobby({
               fontSize: 11,
             }}
           >
-            waiting…
+            {t("waiting…")}
           </div>
         ))}
       </div>
@@ -258,13 +261,13 @@ function Lobby({
       {roomId && (
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 14 }}>
           <span>
-            Room code <strong style={{ fontFamily: "monospace", fontSize: 16 }}>{roomId}</strong>
+            {t("Room code")} <strong style={{ fontFamily: "monospace", fontSize: 16 }}>{roomId}</strong>
           </span>
           <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => copy("code", roomId)}>
-            {copied === "code" ? "Copied ✓" : "Copy code"}
+            {copied === "code" ? t("Copied ✓") : t("Copy code")}
           </button>
           <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => copy("link", link)}>
-            {copied === "link" ? "Copied ✓" : "Copy invite link"}
+            {copied === "link" ? t("Copied ✓") : t("Copy invite link")}
           </button>
         </div>
       )}
@@ -272,10 +275,10 @@ function Lobby({
       <div style={{ marginTop: 14 }}>
         {lobby.host ? (
           <button className="primary" disabled={lobby.joined < 2} onClick={onStart}>
-            {lobby.joined < 2 ? "Waiting for one more…" : `Start game (${lobby.joined} in)`}
+            {lobby.joined < 2 ? t("Waiting for one more…") : t("Start game ({n} in)", { n: lobby.joined })}
           </button>
         ) : (
-          <span style={{ color: "var(--muted)" }}>Waiting for the host to start…</span>
+          <span style={{ color: "var(--muted)" }}>{t("Waiting for the host to start…")}</span>
         )}
       </div>
     </section>
@@ -298,23 +301,24 @@ function Frame({ children, onLeave, onRules }: { children: ReactNode; onLeave: (
 }
 
 function Status({ status, roomId, error }: { status: string; roomId: string | null; error: string | null }): JSX.Element {
+  const t = useT();
   const text =
     status === "connecting"
-      ? "Connecting…"
+      ? t("Connecting…")
       : status === "waiting"
-        ? "In the lobby…"
+        ? t("In the lobby…")
         : status === "reconnecting"
-          ? "Connection lost — reconnecting…"
+          ? t("Connection lost — reconnecting…")
           : status === "left"
-            ? "You were disconnected. The others played on without you."
+            ? t("You were disconnected. The others played on without you.")
             : status === "error"
-              ? `Error: ${error ?? "unknown"}`
+              ? t("Error: {msg}", { msg: error ?? t("unknown") })
               : ""; // "playing" needs no banner — the board says it
   return (
     <div style={{ margin: "8px 0", display: "flex", gap: 12, alignItems: "center" }}>
       {roomId && status !== "playing" && (
         <span>
-          Room code: <strong style={{ fontFamily: "monospace" }}>{roomId}</strong>
+          {t("Room code:")} <strong style={{ fontFamily: "monospace" }}>{roomId}</strong>
         </span>
       )}
       {text && <span style={{ opacity: 0.85 }}>{text}</span>}

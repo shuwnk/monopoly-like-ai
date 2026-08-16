@@ -20,6 +20,13 @@ export default tseslint.config(
     },
   },
   {
+    // build/tooling scripts run under Node, so they get Node's globals
+    files: ["scripts/**/*.mjs", "scripts/**/*.js"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly" },
+    },
+  },
+  {
     files: ["packages/engine/**/*.ts"],
     languageOptions: {
       globals: {}, // no browser/node globals in the engine

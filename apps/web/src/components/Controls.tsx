@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useT } from "../i18n/index.js";
 import { BIND_ACTIONS, BIND_LABELS, DEFAULT_BINDS, keyLabel, resolveBinds, type BindAction } from "../game/keybinds.js";
 import { useProfile } from "../store/profile.js";
 
@@ -10,6 +11,7 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
   const setBind = useProfile((s) => s.setBind);
   const resetBinds = useProfile((s) => s.resetBindsToDefault);
   const binds = resolveBinds(saved);
+  const t = useT();
 
   // which slot is listening for a keypress: `${action}:${index}`
   const [listening, setListening] = useState<string | null>(null);
@@ -31,7 +33,7 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
       // taking a key from another action would leave that one unreachable
       const owner = BIND_ACTIONS.find((a) => a !== action && binds[a].includes(key));
       if (owner) {
-        setClash(`${keyLabel(key)} is already ${BIND_LABELS[owner].toLowerCase()}`);
+        setClash(t("{key} is already used for “{action}”", { key: keyLabel(key), action: t(BIND_LABELS[owner]) }));
         setListening(null);
         return;
       }
@@ -49,11 +51,11 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
   return (
     <main style={{ minHeight: "100vh", padding: 24, maxWidth: 560, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>Controls</h1>
-        <button onClick={onLeave}>Back</button>
+        <h1 style={{ margin: 0, fontSize: 24 }}>{t("Controls")}</h1>
+        <button onClick={onLeave}>{t("Back")}</button>
       </header>
       <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0 }}>
-        Used by every minigame. Click a key to change it, then press the new one — Esc cancels.
+        {t("Used by every minigame. Click a key to change it, then press the new one — Esc cancels.")}
       </p>
 
       {clash && (
@@ -75,7 +77,7 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
               border: "1px solid var(--border)",
             }}
           >
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{BIND_LABELS[action]}</span>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{t(BIND_LABELS[action])}</span>
             <div style={{ display: "flex", gap: 6 }}>
               {[0, 1].map((slot) => {
                 const key = binds[action][slot];
@@ -83,14 +85,14 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
                 const live = listening === id;
                 if (!key && slot === 1 && binds[action].length <= 1 && !live) {
                   return (
-                    <button key={slot} onClick={() => setListening(id)} style={keyStyle(false)} title="Add a second key">
+                    <button key={slot} onClick={() => setListening(id)} style={keyStyle(false)} title={t("Add a second key")}>
                       +
                     </button>
                   );
                 }
                 return (
                   <button key={slot} onClick={() => setListening(id)} style={keyStyle(live)}>
-                    {live ? "press a key…" : keyLabel(key ?? "")}
+                    {live ? t("press a key…") : keyLabel(key ?? "")}
                   </button>
                 );
               })}
@@ -100,9 +102,9 @@ export function Controls({ onLeave }: { onLeave: () => void }): JSX.Element {
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}>
-        <button onClick={resetBinds}>Reset to defaults</button>
+        <button onClick={resetBinds}>{t("Reset to defaults")}</button>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          Default: {DEFAULT_BINDS.up.map(keyLabel).join(" / ")} to move, Space to jump
+          {t("Default: {keys} to move, Space to jump", { keys: DEFAULT_BINDS.up.map(keyLabel).join(" / ") })}
         </span>
       </div>
     </main>

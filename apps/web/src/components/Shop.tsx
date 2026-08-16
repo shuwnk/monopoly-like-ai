@@ -1,4 +1,5 @@
 import { AVATARS, BODY_COLORS, HATS, resolveLook } from "../game/avatars.js";
+import { useT } from "../i18n/index.js";
 import { SHOP, useProfile, type ShopItem } from "../store/profile.js";
 import { AvatarThumb } from "./AvatarThumb.js";
 
@@ -9,6 +10,7 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
   const { coins, owned, weapon, brawler, avatar, color, hat, buy, equip, setAvatar, setColor, setHat } = useProfile();
   // what everyone else will actually see: mascot + colour + accessory together
   const me = resolveLook({ av: avatar, color, hat });
+  const t = useT();
 
   const row = (item: ShopItem): JSX.Element => {
     const isOwned = owned.includes(item.id);
@@ -47,10 +49,10 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
   return (
     <main style={{ minHeight: "100vh", padding: 24, maxWidth: 760, margin: "0 auto" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>Shop &amp; Loadout</h1>
+        <h1 style={{ margin: 0, fontSize: 24 }}>{t("Shop & Loadout")}</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>🪙 {coins}</div>
-          <button onClick={onLeave}>Back</button>
+          <button onClick={onLeave}>{t("Back")}</button>
         </div>
       </header>
 
@@ -73,11 +75,11 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
         >
           <AvatarThumb av={me} size={104} />
           <span style={{ fontSize: 12, fontWeight: 800 }}>{me.name}</span>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>this is what others see</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>{t("this is what others see")}</span>
         </div>
 
         <div style={{ flex: 1, minWidth: 280 }}>
-          <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🧑 Character</h2>
+          <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🧑 {t("Character")}</h2>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {AVATARS.map((av) => (
               <button
@@ -102,20 +104,20 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
             ))}
           </div>
 
-          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎨 Colour</h2>
+          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎨 {t("Colour")}</h2>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <Swatch label="Default" swatch="" active={color === ""} onPick={() => setColor("")} />
+            <Swatch label={t("Default")} swatch="" active={color === ""} onPick={() => setColor("")} />
             {BODY_COLORS.map((c) => (
               <Swatch key={c} label={c} swatch={c} active={color === c} onPick={() => setColor(c)} />
             ))}
           </div>
 
-          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎩 Accessory</h2>
+          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎩 {t("Accessory")}</h2>
           <p style={{ margin: "-4px 0 8px", fontSize: 12, color: "var(--muted)" }}>
-            Looks only — a helmet won&apos;t save you from anything.
+            {t("Looks only — a helmet won't save you from anything.")}
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <HatChip label="None" active={hat === ""} onPick={() => setHat("")} />
+            <HatChip label={t("None")} active={hat === ""} onPick={() => setHat("")} />
             {HATS.map((h) => (
               <HatChip key={h.id} label={h.name} dot={h.color} active={hat === h.id} onPick={() => setHat(h.id)} />
             ))}
@@ -124,7 +126,7 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
       </section>
 
       <section style={{ marginTop: 22 }}>
-        <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🎒 Gear</h2>
+        <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🎒 {t("Gear")}</h2>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{SHOP.map(row)}</div>
       </section>
     </main>

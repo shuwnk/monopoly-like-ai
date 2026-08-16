@@ -2,7 +2,7 @@
   "name": "party-monopoly",
   "version": "0.0.0",
   "private": true,
-  "description": "Party Monopoly — faithful board with party minigames. Transport-independent, deterministic engine.",
+  "description": "Party Monopoly \u2014 faithful board with party minigames. Transport-independent, deterministic engine.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -18,7 +18,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "sim": "npm run sim --workspace @party-monopoly/sim --",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "i18n": "node scripts/extract-strings.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

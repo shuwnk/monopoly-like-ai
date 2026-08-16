@@ -1,3 +1,5 @@
+import { msg } from "../i18n/index.js";
+
 // Player-remappable controls, shared by every minigame so one rebind applies
 // everywhere. Keys are stored the way the games already read them:
 // `e.key.toLowerCase()` — so "ArrowUp" is "arrowup" and Space is " ".
@@ -5,12 +7,14 @@
 export type BindAction = "up" | "down" | "left" | "right" | "action";
 export const BIND_ACTIONS: BindAction[] = ["up", "down", "left", "right", "action"];
 
+// wrapped in msg() so the extractor finds them; the Controls screen calls t() on
+// the value it reads out of here
 export const BIND_LABELS: Record<BindAction, string> = {
-  up: "Move up",
-  down: "Move down",
-  left: "Move left",
-  right: "Move right",
-  action: "Jump / place bomb",
+  up: msg("Move up"),
+  down: msg("Move down"),
+  left: msg("Move left"),
+  right: msg("Move right"),
+  action: msg("Jump / place bomb"),
 };
 
 // Two bindings per action by default so WASD and the arrow keys both work out of

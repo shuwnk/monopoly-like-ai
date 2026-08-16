@@ -116,7 +116,8 @@
       "Bash(SERVER_URL=\"wss://party-monopolyweb-production-c2e0.up.railway.app\" node .lobbycheck.mjs)",
       "Bash(node -e ' *)",
       "Bash(VITE_SERVER_URL=\"wss://party-monopolyweb-production-c2e0.up.railway.app\" npm run build)",
-      "Bash(node -p ''\\\\''  typescript@'\\\\''+require\\('\\\\''/private/tmp/claude-501/-Users-mhd-Projects-react-monopoly/04e52ac9-e3f3-417c-9ee4-80dd70a1dcc0/scratchpad/vercelsim/node_modules/typescript/package.json'\\\\''\\).version')"
+      "Bash(node -p ''\\\\''  typescript@'\\\\''+require\\('\\\\''/private/tmp/claude-501/-Users-mhd-Projects-react-monopoly/04e52ac9-e3f3-417c-9ee4-80dd70a1dcc0/scratchpad/vercelsim/node_modules/typescript/package.json'\\\\''\\).version')",
+      "Bash(node -e \"const {STRINGS}=await import\\('./apps/web/src/i18n/strings.ts'\\).catch\\(\\(\\)=>\\({}\\)\\); \")"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useT } from "../i18n/index.js";
 import { MAX_NAME_LEN, useProfile } from "../store/profile.js";
 import { resolveLook } from "../game/avatars.js";
 import { AvatarThumb } from "./AvatarThumb.js";
@@ -25,6 +26,7 @@ export function Menu({
   onBarn,
   onShop,
   onControls,
+  onLanguage,
   onCreate,
   onJoin,
 }: {
@@ -44,6 +46,7 @@ export function Menu({
   onBarn: () => void;
   onShop: () => void;
   onControls: () => void;
+  onLanguage: () => void;
   onCreate: (durationSec: number, maxPlayers: number) => void;
   onJoin: (roomId: string) => void;
 }): JSX.Element {
@@ -51,6 +54,7 @@ export function Menu({
   const [lengthMin, setLengthMin] = useState(15);
   const [players, setPlayers] = useState(4);
   const [rules, setRules] = useState(false);
+  const t = useT();
   const name = useProfile((s) => s.name);
   const setName = useProfile((s) => s.setName);
   const avatar = useProfile((s) => s.avatar);
@@ -84,15 +88,20 @@ export function Menu({
           <p style={{ marginTop: 4, color: "var(--muted)", letterSpacing: 2, textTransform: "uppercase", fontSize: 12 }}>
             Tour Brasil
           </p>
-          <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setRules(true)}>
-            How to win
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={onLanguage} title={t("Language")}>
+              🌐 {t("Language")}
+            </button>
+            <button style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setRules(true)}>
+              {t("How to win")}
+            </button>
+          </div>
         </div>
 
         <section style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
           {/* Identity first: your name and character are what everyone else sees,
               so they belong at the top rather than buried under "Practice". */}
-          <Card title="You">
+          <Card title={t("You")}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <button
                 onClick={onShop}
@@ -107,33 +116,33 @@ export function Menu({
                   maxLength={MAX_NAME_LEN}
                   autoFocus={!!invite && !name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="your name"
+                  placeholder={t("your name")}
                   style={{ width: "100%" }}
                 />
                 <div style={{ display: "flex", gap: 8 }}>
                   <button style={{ flex: 1 }} onClick={onShop}>
-                    🎨 Character
+                    🎨 {t("Character")}
                   </button>
                   <button style={{ flex: 1 }} onClick={onControls}>
-                    ⌨️ Controls
+                    ⌨️ {t("Controls")}
                   </button>
                 </div>
               </div>
             </div>
           </Card>
 
-          <Card title="Local">
+          <Card title={t("Local")}>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="primary" style={{ flex: 1 }} onClick={onHotseat}>
-                Hotseat
+                {t("Hotseat")}
               </button>
               <button style={{ flex: 1 }} onClick={onVsAI}>
-                Play vs AI
+                {t("Play vs AI")}
               </button>
             </div>
           </Card>
 
-          <Card title="Practice">
+          <Card title={t("Practice")}>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {/* diagnostic harnesses — useful while building, noise for a player */}
               {DEV && (
@@ -173,34 +182,34 @@ export function Menu({
             </div>
           </Card>
 
-          <Card title="Online">
+          <Card title={t("Online")}>
             {invite && (
               <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "var(--panel-2)", border: "1px solid var(--accent)", fontSize: 13 }}>
                 🎟️ You were invited to room <strong style={{ fontFamily: "monospace" }}>{invite}</strong> — set your name above, then Join.
               </div>
             )}
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>
-              Players
+              {t("Players")}
               <select value={players} onChange={(e) => setPlayers(Number(e.target.value))} style={{ flex: 1, padding: 6 }}>
                 {PLAYER_COUNTS.map((n) => (
                   <option key={n} value={n}>
-                    {n} players
+                    {t("{n} players", { n })}
                   </option>
                 ))}
               </select>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13, color: "var(--muted)" }}>
-              Game length
+              {t("Game length")}
               <select value={lengthMin} onChange={(e) => setLengthMin(Number(e.target.value))} style={{ flex: 1, padding: 6 }}>
                 {LENGTHS.map((m) => (
                   <option key={m} value={m}>
-                    {m} minutes
+                    {t("{m} minutes", { m })}
                   </option>
                 ))}
               </select>
             </label>
             <button className="primary" style={{ width: "100%", marginBottom: 12 }} onClick={() => onCreate(lengthMin * 60, players)}>
-              Create room
+              {t("Create room")}
             </button>
             <form
               style={{ display: "flex", gap: 8 }}
@@ -210,9 +219,9 @@ export function Menu({
                 if (id) onJoin(id);
               }}
             >
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="room code" style={{ flex: 1 }} />
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t("room code")} style={{ flex: 1 }} />
               <button type="submit" disabled={!code.trim()}>
-                Join
+                {t("Join")}
               </button>
             </form>
           </Card>
