@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MinigameResult } from "@party-monopoly/types";
-import { avatarRoster, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 
@@ -156,7 +156,7 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
   const staminaRef = useRef<HTMLDivElement | null>(null);
 
   function newWorld(): void {
-    const roster = avatarRoster(useProfile.getState().avatar, N);
+    const roster = avatarRoster(resolveLook(myLook()), N);
     // party mode seats the board players (fighter 0 = the keyboard human); otherwise the
     // standalone roster of You + bots
     const names = party ? party.seats.map((s) => s.name) : NAMES;

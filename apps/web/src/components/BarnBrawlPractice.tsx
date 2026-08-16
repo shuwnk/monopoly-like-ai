@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { MinigameResult } from "@party-monopoly/types";
-import { avatarRoster, type Avatar } from "../game/avatars.js";
+import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
 import { animateChar, buildAvatar3D, type Char3D } from "../game/avatar3d.js";
 import { createAnnouncer } from "../game/announcer.js";
-import { useProfile } from "../store/profile.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 
 // "Barn Brawl" — a 3D third-person arena shooter (Pummel-Party style). MILESTONE 1:
@@ -323,7 +323,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     }
 
     // ── characters: the player's picked mascot + distinct ones for the enemies ──
-    const roster = avatarRoster(useProfile.getState().avatar, N);
+    const roster = avatarRoster(resolveLook(myLook()), N);
     const playerRig = buildAvatar3D(roster[0]!);
     const player = playerRig.group;
     scene.add(player);

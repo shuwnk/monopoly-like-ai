@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { MinigameRequest, MinigameResult } from "@party-monopoly/types";
-import { avatarRoster } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { avatarRoster, resolveLook } from "../game/avatars.js";
+import { myLook } from "../store/profile.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet } from "../three/character.js";
@@ -78,7 +78,7 @@ export function ArenaDuel({
     }
 
     // two brawlers — you gold-outlined, owner red-outlined
-    const roster = avatarRoster(useProfile.getState().avatar, 2);
+    const roster = avatarRoster(resolveLook(myLook()), 2);
     const you = createPuppet(scene, roster[0]!, { toon: true, outline: "#ffd23f" });
     const opp = createPuppet(scene, roster[1]!, { toon: true, outline: "#ff5566" });
     you.group.scale.setScalar(0.9);

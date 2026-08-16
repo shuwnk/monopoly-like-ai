@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { FD_GRID } from "@party-monopoly/types";
-import { AVATARS, avatarById, avatarRoster, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { AVATARS, resolveLook, type Avatar } from "../game/avatars.js";
 import { useOnlineStore } from "../store/onlineStore.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { TouchStick } from "./TouchStick.js";
@@ -28,11 +27,12 @@ export function OnlinePartyRound(): JSX.Element {
     const scene3d = createFloorDropScene(canvas, GRID, { fallTime: FALL_TIME });
     const { partySnap, sendPartyInput } = useOnlineStore.getState();
 
-    // roster has colors only; assign distinct avatars by slot, the local player their own
-    const base = useProfile.getState().avatar;
-    const avs = avatarRoster(base, party.roster.length);
+    // Every fighter is drawn from the look the SERVER sent for them, so all
+    // clients render the same character for the same player. (This used to be
+    // derived from the local profile, which meant two people saw different
+    // avatars for each other.) Bots have no look, so they fall back by slot.
     const avatars = new Map<number, Avatar>();
-    party.roster.forEach((p, i) => avatars.set(p.id, p.id === party.you ? avatarById(base) : avs[i] ?? AVATARS[0]!));
+    party.roster.forEach((p, i) => avatars.set(p.id, p.look ? resolveLook(p.look) : AVATARS[i % AVATARS.length]!));
 
     const keys = new Set<string>();
     const sent = { dx: 0, dy: 0 };

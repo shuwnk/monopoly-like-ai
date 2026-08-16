@@ -1,3 +1,5 @@
+import type { PlayerLook } from "./look.js";
+
 // Wire protocol for the real-time PvP "Floor Drop" minigame. The server owns the
 // simulation and ticks it at ~20Hz; clients send only their movement input and
 // render the snapshots the server broadcasts.
@@ -34,6 +36,9 @@ export interface FDRosterEntry {
   readonly name: string;
   readonly color: string;
   readonly bot: boolean;
+  // what this fighter looks like. Server-assigned so every client renders the
+  // same character for the same player (bots get one picked for them).
+  readonly look: PlayerLook;
 }
 
 export interface FDStart {

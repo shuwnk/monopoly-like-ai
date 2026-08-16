@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Avatar } from "./avatars.js";
+import { HATS, type Avatar, type HatId } from "./avatars.js";
 
 // A slim low-poly HUMANOID mascot (Pummel-Party style), rigged as a jointed body:
 // hips and shoulders pivot, knees and elbows bend under them, the head sits on its
@@ -184,6 +184,7 @@ export function buildAvatar3D(av: Avatar, opts?: { outline?: THREE.ColorRepresen
   skull.userData.isHead = true; // shots here count as headshots
 
   buildFeature(head, av, accMat, bodyMat);
+  if (av.hat) buildHat(head, av.hat, mk);
 
   // ── scarf: collar on the chest, tails on a pivot so they trail the body ──
   const collar = addU(new THREE.TorusGeometry(0.26, 0.09, 6, 12), accMat, 0, 1.4, 0);
@@ -413,6 +414,54 @@ export function animateChar(c: Char3D, speed: number, dt: number, motion?: CharM
   a.tail = damp(a.tail, -0.1 - speed * 0.055 - w * 0.12, 5, step);
   c.tail.rotation.x = a.tail + Math.sin(c.phase * 2) * 0.05 * w;
   c.tail.rotation.z = damp(c.tail.rotation.z, -turnRate * 0.1, 4, step);
+}
+
+// Cosmetic headgear, parented to the head group so it rides every head turn and
+// bob. Sits above the skull (radius 0.42 centred at y=1.72 world). Decoration
+// only: no mesh here is in the hit list, so it can never absorb a shot.
+function buildHat(head: THREE.Group, hat: HatId, mk: (color: string, rough?: number) => BodyMat): void {
+  const color = HATS.find((h) => h.id === hat)?.color ?? "#e53935";
+  const mat = mk(color, 0.65);
+  const dark = mk("#22262e", 0.5);
+  const put = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, rx = 0): THREE.Mesh => {
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.set(x, y - NECK_Y, z);
+    mesh.rotation.x = rx;
+    mesh.castShadow = true;
+    head.add(mesh);
+    return mesh;
+  };
+
+  switch (hat) {
+    case "cap":
+      put(new THREE.SphereGeometry(0.44, 10, 7, 0, Math.PI * 2, 0, Math.PI / 2), mat, 0, 2.0, 0);
+      put(new THREE.BoxGeometry(0.62, 0.05, 0.42), mat, 0, 1.99, 0.42); // peak
+      break;
+    case "helmet":
+      put(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat, 0, 1.96, 0);
+      put(new THREE.TorusGeometry(0.5, 0.05, 6, 14, Math.PI), mk("#eceff1", 0.4), 0, 1.98, 0, Math.PI / 2);
+      break;
+    case "crown": {
+      put(new THREE.CylinderGeometry(0.4, 0.42, 0.16, 10), mat, 0, 2.06, 0);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        put(new THREE.ConeGeometry(0.07, 0.2, 6), mat, Math.cos(a) * 0.33, 2.2, Math.sin(a) * 0.33);
+      }
+      break;
+    }
+    case "party":
+      put(new THREE.ConeGeometry(0.3, 0.66, 10), mat, 0, 2.28, 0);
+      put(new THREE.SphereGeometry(0.1, 8, 6), mk("#fff59d", 0.5), 0, 2.62, 0);
+      break;
+    case "cans":
+      put(new THREE.TorusGeometry(0.44, 0.055, 6, 14, Math.PI), dark, 0, 2.02, 0, Math.PI / 2);
+      for (const s of [-1, 1]) put(new THREE.CylinderGeometry(0.15, 0.15, 0.12, 10), mat, s * 0.44, 1.78, 0).rotation.z = Math.PI / 2;
+      break;
+    case "band":
+      put(new THREE.CylinderGeometry(0.44, 0.44, 0.15, 12), mat, 0, 1.94, 0);
+      put(new THREE.ConeGeometry(0.1, 0.3, 6), mat, 0.4, 1.9, -0.24, Math.PI / 2); // trailing knot
+      break;
+  }
 }
 
 function buildFeature(parent: THREE.Group, av: Avatar, acc: THREE.Material, body: THREE.Material): void {

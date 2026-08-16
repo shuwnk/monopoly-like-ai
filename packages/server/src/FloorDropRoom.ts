@@ -1,5 +1,16 @@
 import { Room, type Client } from "colyseus";
-import { FDClient, FDServer, type FDInput, type FDLobby, type FDOver, type FDStart } from "@party-monopoly/types";
+import {
+  EMPTY_LOOK,
+  FDClient,
+  FDServer,
+  sanitizeLook,
+  type FDInput,
+  type FDLobby,
+  type FDOver,
+  type FDStart,
+  type PlayerIdentity,
+  type PlayerLook,
+} from "@party-monopoly/types";
 import { FloorDropSim } from "./FloorDropSim.js";
 
 const MIN_PLAYERS = 2;
@@ -11,6 +22,9 @@ const TICK_MS = 50; // 20 Hz authoritative simulation
 // movement input and render the snapshots broadcast each tick.
 export class FloorDropRoom extends Room {
   private seats = new Map<string, number>(); // sessionId -> fighter id
+  // sessionId -> the name/look that client introduced itself with, so the roster
+  // the server broadcasts is what EVERY client draws
+  private profiles = new Map<string, { name: string; look: PlayerLook }>();
   private sim: FloorDropSim | null = null;
   private started = false;
   private ended = false;
@@ -27,13 +41,17 @@ export class FloorDropRoom extends Room {
     });
   }
 
-  override onJoin(client: Client): void {
+  override onJoin(client: Client, options?: PlayerIdentity): void {
     const seat = this.nextSeat();
     if (this.started || seat === null) {
       client.leave();
       return;
     }
     this.seats.set(client.sessionId, seat);
+    this.profiles.set(client.sessionId, {
+      name: typeof options?.name === "string" && options.name.trim() ? options.name.trim().slice(0, 14) : `Player ${seat + 1}`,
+      look: sanitizeLook(options?.look),
+    });
     if (this.seats.size >= this.maxClients) this.startGame();
     else this.broadcastLobby();
   }
@@ -43,6 +61,7 @@ export class FloorDropRoom extends Room {
     if (seat === undefined) return;
     if (!this.started) {
       this.seats.delete(client.sessionId);
+      this.profiles.delete(client.sessionId);
       if (this.seats.size === 0) this.disconnect();
       else this.broadcastLobby();
       return;
@@ -72,13 +91,22 @@ export class FloorDropRoom extends Room {
     // re-index seats to a contiguous 0..N-1 in join order
     const ordered = [...this.seats.entries()].sort((a, b) => a[1] - b[1]);
     this.seats.clear();
+    const looks = new Map<number, PlayerLook>();
     const humans = ordered.map(([sid], i) => {
       this.seats.set(sid, i);
-      return { id: i, name: `Player ${i + 1}` };
+      const prof = this.profiles.get(sid);
+      looks.set(i, prof?.look ?? EMPTY_LOOK);
+      return { id: i, name: prof?.name ?? `Player ${i + 1}` };
     });
 
     this.sim = new FloorDropSim(humans, BOT_FILL_TARGET);
-    const roster = this.sim.fighters.map((f) => ({ id: f.id, name: f.name, color: f.color, bot: f.isBot }));
+    const roster = this.sim.fighters.map((f) => ({
+      id: f.id,
+      name: f.name,
+      color: f.color,
+      bot: f.isBot,
+      look: looks.get(f.id) ?? EMPTY_LOOK,
+    }));
     for (const c of this.clients) {
       const you = this.seats.get(c.sessionId);
       if (you !== undefined) c.send(FDServer.start, { you, players: roster } satisfies FDStart);

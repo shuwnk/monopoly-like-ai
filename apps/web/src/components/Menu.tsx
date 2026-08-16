@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { MAX_NAME_LEN, useProfile } from "../store/profile.js";
+import { resolveLook } from "../game/avatars.js";
+import { AvatarThumb } from "./AvatarThumb.js";
+import { DEV } from "../devMode.js";
 import { HowToWin } from "./HowToWin.js";
 
 // game-length options (minutes) and player-count options for an online room
@@ -48,6 +51,9 @@ export function Menu({
   const [rules, setRules] = useState(false);
   const name = useProfile((s) => s.name);
   const setName = useProfile((s) => s.setName);
+  const avatar = useProfile((s) => s.avatar);
+  const color = useProfile((s) => s.color);
+  const hat = useProfile((s) => s.hat);
 
   // the invite code lands a tick after mount (it's read once the session restore
   // settles), so fill the join box when it shows up
@@ -82,6 +88,33 @@ export function Menu({
         </div>
 
         <section style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
+          {/* Identity first: your name and character are what everyone else sees,
+              so they belong at the top rather than buried under "Practice". */}
+          <Card title="You">
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button
+                onClick={onShop}
+                title="Change your character"
+                style={{ padding: 4, borderRadius: 12, background: "var(--panel-2)", border: "2px solid var(--border)", cursor: "pointer", lineHeight: 0 }}
+              >
+                <AvatarThumb av={resolveLook({ av: avatar, color, hat })} size={64} />
+              </button>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                <input
+                  value={name}
+                  maxLength={MAX_NAME_LEN}
+                  autoFocus={!!invite && !name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="your name"
+                  style={{ width: "100%" }}
+                />
+                <button style={{ width: "100%" }} onClick={onShop}>
+                  🎨 Character, colour &amp; hat
+                </button>
+              </div>
+            </div>
+          </Card>
+
           <Card title="Local">
             <div style={{ display: "flex", gap: 10 }}>
               <button className="primary" style={{ flex: 1 }} onClick={onHotseat}>
@@ -95,18 +128,23 @@ export function Menu({
 
           <Card title="Practice">
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <button style={{ width: "100%" }} onClick={onDuelPractice}>
-                Duel Practice — reflex fairness gate
-              </button>
-              <button style={{ width: "100%" }} onClick={onAirportPractice}>
-                Airport Practice — test the fly-to picker
-              </button>
-              <button style={{ width: "100%" }} onClick={onCopaPractice}>
-                Copa Practice — test the boost picker
-              </button>
-              <button style={{ width: "100%" }} onClick={onWinTest}>
-                Win Conditions — trigger &amp; verify each win
-              </button>
+              {/* diagnostic harnesses — useful while building, noise for a player */}
+              {DEV && (
+                <>
+                  <button style={{ width: "100%" }} onClick={onDuelPractice}>
+                    Duel Practice — reflex fairness gate
+                  </button>
+                  <button style={{ width: "100%" }} onClick={onAirportPractice}>
+                    Airport Practice — test the fly-to picker
+                  </button>
+                  <button style={{ width: "100%" }} onClick={onCopaPractice}>
+                    Copa Practice — test the boost picker
+                  </button>
+                  <button style={{ width: "100%" }} onClick={onWinTest}>
+                    Win Conditions — trigger &amp; verify each win
+                  </button>
+                </>
+              )}
               <button style={{ width: "100%" }} onClick={onFloorBrawl}>
                 Floor Brawl — break-the-floor survival
               </button>
@@ -125,29 +163,15 @@ export function Menu({
               <button style={{ width: "100%" }} onClick={onBarn}>
                 Barn Brawl — 3D arena shooter, most kills
               </button>
-              <button style={{ width: "100%" }} onClick={onShop}>
-                🪙 Shop &amp; Loadout — spend coins, equip your gear
-              </button>
             </div>
           </Card>
 
           <Card title="Online">
             {invite && (
               <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: "var(--panel-2)", border: "1px solid var(--accent)", fontSize: 13 }}>
-                🎟️ You were invited to room <strong style={{ fontFamily: "monospace" }}>{invite}</strong> — put a name in and hit Join.
+                🎟️ You were invited to room <strong style={{ fontFamily: "monospace" }}>{invite}</strong> — set your name above, then Join.
               </div>
             )}
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>
-              Your name
-              <input
-                value={name}
-                maxLength={MAX_NAME_LEN}
-                autoFocus={!!invite && !name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="how friends see you"
-                style={{ flex: 1 }}
-              />
-            </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>
               Players
               <select value={players} onChange={(e) => setPlayers(Number(e.target.value))} style={{ flex: 1, padding: 6 }}>

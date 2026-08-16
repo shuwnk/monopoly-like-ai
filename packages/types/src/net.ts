@@ -1,4 +1,5 @@
 import type { PlayerId } from "./ids.js";
+import type { PlayerLook } from "./look.js";
 import type { MinigameOutcome } from "./minigame.js";
 
 // Online wire protocol between the Colyseus server and a client. The server is
@@ -66,7 +67,7 @@ export interface TapMessage {
 // sanitizes the name and falls back to "Player N" if it's empty or missing.
 export interface PlayerIdentity {
   readonly name?: string;
-  readonly avatar?: string; // mascot id, for the lobby roster
+  readonly look?: PlayerLook; // mascot + colour + accessory, shown to everyone
 }
 
 // options the room creator passes to set up the match
@@ -82,7 +83,7 @@ export interface CreateRoomOptions extends PlayerIdentity {
 export interface LobbySeat {
   readonly id: PlayerId;
   readonly name: string;
-  readonly avatar: string;
+  readonly look: PlayerLook;
 }
 
 // pre-game lobby status, sent to each client as players join
@@ -103,6 +104,10 @@ export interface StateMessage<TState> {
   readonly you: PlayerId;
   // epoch ms when the countdown hits zero (richest wins); absent = no timer yet
   readonly endsAt?: number;
+  // every seated player's cosmetic look, keyed by PlayerId. Rides alongside the
+  // state rather than inside it: the engine is deterministic and knows nothing
+  // about how players are drawn.
+  readonly looks?: Readonly<Record<string, PlayerLook>>;
 }
 
 // red — get ready. carries the flat rent so the client can show the stakes, and

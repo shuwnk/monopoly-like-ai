@@ -83,7 +83,7 @@ export class OnlineClient {
   }
 
   async create(h: OnlineHandlers, durationSec: number | undefined, maxPlayers: number | undefined, me: PlayerIdentity): Promise<string> {
-    const opts: Record<string, number | string> = { ...identity(me) };
+    const opts: Record<string, unknown> = { ...identity(me) };
     if (durationSec !== undefined) opts.durationSec = durationSec;
     if (maxPlayers !== undefined) opts.maxPlayers = maxPlayers;
     this.room = await this.client.create(ROOM, opts);
@@ -163,9 +163,9 @@ export class OnlineClient {
 }
 
 // only send the fields the player actually set; the server names them otherwise
-function identity(me: PlayerIdentity): Record<string, string> {
-  const out: Record<string, string> = {};
+function identity(me: PlayerIdentity): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
   if (me.name) out.name = me.name;
-  if (me.avatar) out.avatar = me.avatar;
+  if (me.look) out.look = me.look;
   return out;
 }

@@ -4,6 +4,7 @@ import { useGameStore } from "../store/gameStore.js";
 import { Board } from "./Board.js";
 import { IsoBoard } from "./IsoBoard.js";
 import { DebugPanel } from "./DebugPanel.js";
+import { DEV } from "../devMode.js";
 import { Hud } from "./Hud.js";
 import { ArenaDuel } from "./ArenaDuel.js";
 import { PartyRound } from "./PartyRound.js";
@@ -182,7 +183,7 @@ export function HotseatGame({ onLeave, vsAI = false }: { onLeave: () => void; vs
         {flat ? <Board state={state} /> : <IsoBoard state={state} {...(boardPick ?? {})} />}
       </section>
 
-      <DebugPanel onRestart={restart} flat={flat} onToggleFlat={() => setFlat((f) => !f)} />
+      {DEV && <DebugPanel onRestart={restart} flat={flat} onToggleFlat={() => setFlat((f) => !f)} />}
     </main>
   );
 }

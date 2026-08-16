@@ -1,3 +1,4 @@
+import type { PlayerLook } from "@party-monopoly/types";
 import { create } from "zustand";
 
 // Persistent minigame profile: coins earned from playing, unlocked items, and the
@@ -31,6 +32,8 @@ interface Saved {
   brawler: string;
   avatar: string;
   name: string; // display name for online play; "" until the player types one
+  color: string; // body colour override ("" = the mascot's own palette)
+  hat: string; // accessory id ("" = bare-headed)
 }
 function load(): Saved {
   try {
@@ -44,12 +47,14 @@ function load(): Saved {
         brawler: typeof p.brawler === "string" ? p.brawler : "blaster",
         avatar: typeof p.avatar === "string" ? p.avatar : "blaze",
         name: typeof p.name === "string" ? p.name : "",
+        color: typeof p.color === "string" ? p.color : "",
+        hat: typeof p.hat === "string" ? p.hat : "",
       };
     }
   } catch {
     /* ignore corrupt storage */
   }
-  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze", name: "" };
+  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze", name: "", color: "", hat: "" };
 }
 
 interface ProfileState extends Saved {
@@ -58,6 +63,8 @@ interface ProfileState extends Saved {
   equip: (item: ShopItem) => void;
   setAvatar: (id: string) => void;
   setName: (name: string) => void;
+  setColor: (hex: string) => void;
+  setHat: (id: string) => void;
   award: (n: number) => void;
 }
 
@@ -66,9 +73,9 @@ export const MAX_NAME_LEN = 14;
 
 export const useProfile = create<ProfileState>((set, get) => {
   const persist = (): void => {
-    const { coins, owned, weapon, brawler, avatar, name } = get();
+    const { coins, owned, weapon, brawler, avatar, name, color, hat } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar, name }));
+      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar, name, color, hat }));
     } catch {
       /* ignore */
     }
@@ -96,6 +103,14 @@ export const useProfile = create<ProfileState>((set, get) => {
       set({ name: name.slice(0, MAX_NAME_LEN) });
       persist();
     },
+    setColor: (hex) => {
+      set({ color: hex });
+      persist();
+    },
+    setHat: (id) => {
+      set({ hat: id });
+      persist();
+    },
     award: (n) => {
       set({ coins: get().coins + Math.max(0, Math.round(n)) });
       persist();
@@ -106,4 +121,11 @@ export const useProfile = create<ProfileState>((set, get) => {
 // keys of owned items of a kind (for the games to build their available lists)
 export function ownedKeys(owned: string[], kind: "weapon" | "brawler"): string[] {
   return SHOP.filter((i) => i.kind === kind && owned.includes(i.id)).map((i) => i.key);
+}
+
+// This player's look, in the shape the wire protocol and the renderers expect.
+// One source of truth: what we send to the server is what we draw locally.
+export function myLook(): PlayerLook {
+  const p = useProfile.getState();
+  return { av: p.avatar, color: p.color, hat: p.hat };
 }

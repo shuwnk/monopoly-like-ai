@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { avatarRoster, avatarById, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { avatarRoster, avatarById, type Avatar, resolveLook } from "../game/avatars.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet, type Puppet } from "../three/character.js";
@@ -474,7 +474,7 @@ export function BrawlPractice({ onLeave }: { onLeave: () => void }): JSX.Element
     })();
 
     // ── puppets, built once (roster is deterministic), reused each match ──
-    const roster = avatarRoster(useProfile.getState().avatar, TOTAL);
+    const roster = avatarRoster(resolveLook(myLook()), TOTAL);
     interface Pup {
       puppet: Puppet;
       fill: THREE.Sprite;

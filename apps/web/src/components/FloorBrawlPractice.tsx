@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { avatarRoster, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet, type Puppet } from "../three/character.js";
@@ -188,7 +188,7 @@ export function FloorBrawlPractice({ onLeave }: { onLeave: () => void }): JSX.El
   const infoRef = useRef<HTMLDivElement | null>(null);
 
   function newWorld(): void {
-    const roster = avatarRoster(useProfile.getState().avatar, NAMES.length);
+    const roster = avatarRoster(resolveLook(myLook()), NAMES.length);
     world.current = {
       grid: new Array<Tile>(GRID * GRID).fill(1),
       fighters: NAMES.map((name, i) => ({
@@ -313,7 +313,7 @@ export function FloorBrawlPractice({ onLeave }: { onLeave: () => void }): JSX.El
     });
 
     // puppets + per-fighter shield ring & shove ring
-    const roster = avatarRoster(useProfile.getState().avatar, NAMES.length);
+    const roster = avatarRoster(resolveLook(myLook()), NAMES.length);
     interface Pup { puppet: Puppet; lx: number; lz: number; shield: THREE.Mesh; shove: THREE.Mesh; }
     const pups: Pup[] = roster.map((av, i) => {
       const puppet = createPuppet(scene, av, { toon: true, outline: i === 0 ? "#ffd23f" : "#141428" });

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Client, type Room } from "colyseus.js";
 import { FD_GRID, FDClient, FDServer, type FDLobby, type FDOver, type FDRosterEntry, type FDSnapshot, type FDStart } from "@party-monopoly/types";
-import { AVATARS, avatarById, avatarRoster, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { AVATARS, resolveLook, type Avatar } from "../game/avatars.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { TouchStick } from "./TouchStick.js";
 
@@ -15,6 +15,12 @@ const DROP_ANIM = 0.35;
 const FALL_TIME = 0.6;
 
 type Net = "connect" | "connecting" | "lobby" | "playing" | "over";
+
+// who we tell the room we are, so IT can hand everyone the same roster
+const identity = (): { name: string; look: ReturnType<typeof myLook> } => ({
+  name: useProfile.getState().name.trim(),
+  look: myLook(),
+});
 
 export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -51,12 +57,11 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
     room.onMessage(FDServer.start, (m: FDStart) => {
       youRef.current = m.you;
       rosterRef.current = new Map(m.players.map((p) => [p.id, p]));
-      // the netcode roster has no avatars (just colors), so assign distinct ones by slot,
-      // giving the local player their own equipped avatar
-      const base = useProfile.getState().avatar;
-      const avs = avatarRoster(base, m.players.length);
+      // draw each fighter from the look the server sent for them — deriving it
+      // locally made two clients disagree about who looked like what. Bots carry
+      // no look, so they fall back to a distinct mascot per slot.
       const map = new Map<number, Avatar>();
-      m.players.forEach((p, i) => map.set(p.id, p.id === m.you ? avatarById(base) : avs[i] ?? AVATARS[0]!));
+      m.players.forEach((p, i) => map.set(p.id, p.look ? resolveLook(p.look) : AVATARS[i % AVATARS.length]!));
       avatarsRef.current = map;
       fallRef.current.clear();
       tileAnimRef.current.fill(0);
@@ -82,7 +87,7 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
     setError(null);
     setNet("connecting");
     try {
-      wire(await new Client(SERVER_URL).create("floordrop", { maxPlayers }));
+      wire(await new Client(SERVER_URL).create("floordrop", { maxPlayers, ...identity() }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create room");
       setNet("connect");
@@ -92,7 +97,7 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
     setError(null);
     setNet("connecting");
     try {
-      wire(await new Client(SERVER_URL).joinById(code.trim()));
+      wire(await new Client(SERVER_URL).joinById(code.trim(), identity()));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not join room");
       setNet("connect");

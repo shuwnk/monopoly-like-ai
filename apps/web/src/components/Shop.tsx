@@ -1,4 +1,4 @@
-import { AVATARS } from "../game/avatars.js";
+import { AVATARS, BODY_COLORS, HATS, resolveLook } from "../game/avatars.js";
 import { SHOP, useProfile, type ShopItem } from "../store/profile.js";
 import { AvatarThumb } from "./AvatarThumb.js";
 
@@ -6,7 +6,9 @@ import { AvatarThumb } from "./AvatarThumb.js";
 // and brawlers, and equip which one you take into a match.
 
 export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
-  const { coins, owned, weapon, brawler, avatar, buy, equip, setAvatar } = useProfile();
+  const { coins, owned, weapon, brawler, avatar, color, hat, buy, equip, setAvatar, setColor, setHat } = useProfile();
+  // what everyone else will actually see: mascot + colour + accessory together
+  const me = resolveLook({ av: avatar, color, hat });
 
   const row = (item: ShopItem): JSX.Element => {
     const isOwned = owned.includes(item.id);
@@ -54,30 +56,70 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
 
       <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0 }}>Earn coins by playing the minigames (kills and placement pay out). Pick your character — it's your look across every game and your kit in Brawl: Showdown.</p>
 
-      <section style={{ marginTop: 18 }}>
-        <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🧑 Your character</h2>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-          {AVATARS.map((av) => (
-            <button
-              key={av.id}
-              onClick={() => setAvatar(av.id)}
-              title={av.name}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 2,
-                padding: 6,
-                borderRadius: 10,
-                background: "var(--panel-2)",
-                border: `2px solid ${avatar === av.id ? "var(--accent)" : "transparent"}`,
-                cursor: "pointer",
-              }}
-            >
-              <AvatarThumb av={av} />
-              <span style={{ fontSize: 11, fontWeight: 700 }}>{av.name}</span>
-            </button>
-          ))}
+      <section style={{ marginTop: 18, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+        {/* live preview of the exact look other players will see */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 6,
+            padding: 16,
+            borderRadius: 12,
+            background: "var(--panel-2)",
+            border: "1px solid var(--border)",
+            minWidth: 150,
+          }}
+        >
+          <AvatarThumb av={me} size={104} />
+          <span style={{ fontSize: 12, fontWeight: 800 }}>{me.name}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>this is what others see</span>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 280 }}>
+          <h2 style={{ fontSize: 16, margin: "0 0 8px" }}>🧑 Character</h2>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            {AVATARS.map((av) => (
+              <button
+                key={av.id}
+                onClick={() => setAvatar(av.id)}
+                title={av.name}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 2,
+                  padding: 6,
+                  borderRadius: 10,
+                  background: "var(--panel-2)",
+                  border: `2px solid ${avatar === av.id ? "var(--accent)" : "transparent"}`,
+                  cursor: "pointer",
+                }}
+              >
+                <AvatarThumb av={resolveLook({ av: av.id, color, hat })} />
+                <span style={{ fontSize: 11, fontWeight: 700 }}>{av.name}</span>
+              </button>
+            ))}
+          </div>
+
+          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎨 Colour</h2>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Swatch label="Default" swatch="" active={color === ""} onPick={() => setColor("")} />
+            {BODY_COLORS.map((c) => (
+              <Swatch key={c} label={c} swatch={c} active={color === c} onPick={() => setColor(c)} />
+            ))}
+          </div>
+
+          <h2 style={{ fontSize: 16, margin: "18px 0 8px" }}>🎩 Accessory</h2>
+          <p style={{ margin: "-4px 0 8px", fontSize: 12, color: "var(--muted)" }}>
+            Looks only — a helmet won&apos;t save you from anything.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <HatChip label="None" active={hat === ""} onPick={() => setHat("")} />
+            {HATS.map((h) => (
+              <HatChip key={h.id} label={h.name} dot={h.color} active={hat === h.id} onPick={() => setHat(h.id)} />
+            ))}
+          </div>
         </div>
       </section>
 
@@ -86,5 +128,51 @@ export function Shop({ onLeave }: { onLeave: () => void }): JSX.Element {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{SHOP.map(row)}</div>
       </section>
     </main>
+  );
+}
+
+// one body-colour choice; the empty swatch means "keep the mascot's own palette"
+function Swatch({ label, swatch, active, onPick }: { label: string; swatch: string; active: boolean; onPick: () => void }): JSX.Element {
+  return (
+    <button
+      onClick={onPick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      style={{
+        width: 34,
+        height: 34,
+        borderRadius: "50%",
+        padding: 0,
+        cursor: "pointer",
+        background: swatch || "linear-gradient(135deg, #ff7043 50%, #4fc3f7 50%)",
+        border: `3px solid ${active ? "var(--accent)" : "rgba(255,255,255,0.18)"}`,
+        boxShadow: active ? "0 0 0 2px rgba(0,0,0,0.35)" : "none",
+      }}
+    />
+  );
+}
+
+function HatChip({ label, dot, active, onPick }: { label: string; dot?: string; active: boolean; onPick: () => void }): JSX.Element {
+  return (
+    <button
+      onClick={onPick}
+      aria-pressed={active}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 12px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer",
+        background: "var(--panel-2)",
+        border: `2px solid ${active ? "var(--accent)" : "transparent"}`,
+      }}
+    >
+      {dot && <span style={{ width: 10, height: 10, borderRadius: "50%", background: dot }} />}
+      {label}
+    </button>
   );
 }

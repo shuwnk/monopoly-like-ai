@@ -19,6 +19,9 @@ import {
   type MinigameResult,
   type PlayerId,
   type PlayerIdentity,
+  type PlayerLook,
+  EMPTY_LOOK,
+  sanitizeLook,
   type ShowdownResultMessage,
   type ShowdownStartMessage,
   type StateMessage,
@@ -54,7 +57,6 @@ const MAX_PLAYERS = 10;
 const HOST_SEAT = asPlayerId("p0"); // the first joiner is the host
 // a display name is shown to the whole table, so it gets trimmed and capped
 const MAX_NAME_LEN = 14;
-const DEFAULT_AVATAR = "blaze";
 
 export class GameRoom extends Room {
   private game: GameState | null = null;
@@ -62,7 +64,7 @@ export class GameRoom extends Room {
   private seats = new Map<string, PlayerId>();
   // seat -> who that player says they are. Keyed by seat, not sessionId, so a
   // reconnecting player keeps their name.
-  private profiles = new Map<PlayerId, { name: string; avatar: string }>();
+  private profiles = new Map<PlayerId, { name: string; look: PlayerLook }>();
   // collected taps for the current showdown, keyed by playerId
   private taps = new Map<PlayerId, ReflexInput>();
   // the two players in the live duel; everyone else spectates and may not tap
@@ -111,7 +113,7 @@ export class GameRoom extends Room {
     this.seats.set(client.sessionId, seat);
     this.profiles.set(seat, {
       name: this.uniqueName(cleanName(options?.name) || `Player ${this.seats.size}`),
-      avatar: typeof options?.avatar === "string" ? options.avatar : DEFAULT_AVATAR,
+      look: sanitizeLook(options?.look),
     });
     if (this.seats.size >= this.maxClients) this.startGame();
     else this.broadcastLobby();
@@ -159,7 +161,7 @@ export class GameRoom extends Room {
       const back = await this.allowReconnection(client, RECONNECT_WINDOW_S);
       this.seats.delete(client.sessionId);
       this.seats.set(back.sessionId, seat);
-      back.send(S2C.state, { state: this.game!, you: seat, ...(this.endsAt !== null ? { endsAt: this.endsAt } : {}) } satisfies StateMessage<GameState>);
+      back.send(S2C.state, { state: this.game!, you: seat, looks: this.looks(), ...(this.endsAt !== null ? { endsAt: this.endsAt } : {}) } satisfies StateMessage<GameState>);
     } catch {
       this.seats.delete(client.sessionId);
       this.forfeit(seat);
@@ -190,11 +192,22 @@ export class GameRoom extends Room {
   private roster(): LobbySeat[] {
     return [...this.seats.values()]
       .sort()
-      .map((id) => ({ id, name: this.nameOf(id), avatar: this.profiles.get(id)?.avatar ?? DEFAULT_AVATAR }));
+      .map((id) => ({ id, name: this.nameOf(id), look: this.lookOf(id) }));
   }
 
   private nameOf(seat: PlayerId): string {
     return this.profiles.get(seat)?.name ?? `Player ${Number(seat.slice(1)) + 1}`;
+  }
+
+  private lookOf(seat: PlayerId): PlayerLook {
+    return this.profiles.get(seat)?.look ?? EMPTY_LOOK;
+  }
+
+  // every seated player's look, so a client can draw the whole table correctly
+  private looks(): Record<string, PlayerLook> {
+    const out: Record<string, PlayerLook> = {};
+    for (const id of this.seats.values()) out[id] = this.lookOf(id);
+    return out;
   }
 
   private broadcastLobby() {
@@ -227,6 +240,7 @@ export class GameRoom extends Room {
     client.send(S2C.state, {
       state: this.game,
       you: seat,
+      looks: this.looks(),
       ...(this.endsAt !== null ? { endsAt: this.endsAt } : {}),
     } satisfies StateMessage<GameState>);
   }
@@ -488,7 +502,13 @@ export class GameRoom extends Room {
     });
     this.partySim = new FloorDropSim(humans, humans.length);
     this.partySeat.clear();
-    const roster = this.partySim.fighters.map((f) => ({ id: f.id, name: f.name, color: f.color, bot: f.isBot }));
+    // fighter id → the board player who owns it, so each fighter carries that
+    // player's chosen look. Every client gets this SAME roster, which is what
+    // stops two people seeing different characters for each other.
+    const roster = this.partySim.fighters.map((f) => {
+      const owner = this.partyPlayers[f.id];
+      return { id: f.id, name: f.name, color: f.color, bot: f.isBot, look: owner ? this.lookOf(owner) : EMPTY_LOOK };
+    });
     for (const c of this.clients) {
       const pid = this.seats.get(c.sessionId);
       const fid = pid ? this.partyPlayers.indexOf(pid) : -1;
@@ -575,9 +595,10 @@ export class GameRoom extends Room {
   private broadcastState() {
     const state = this.game!;
     const clock = this.endsAt !== null ? { endsAt: this.endsAt } : {};
+    const looks = this.looks();
     for (const c of this.clients) {
       const you = this.seats.get(c.sessionId);
-      if (you) c.send(S2C.state, { state, you, ...clock } satisfies StateMessage<GameState>);
+      if (you) c.send(S2C.state, { state, you, looks, ...clock } satisfies StateMessage<GameState>);
     }
   }
 

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { MinigameResult } from "@party-monopoly/types";
-import { avatarRoster, type Avatar } from "../game/avatars.js";
-import { useProfile } from "../store/profile.js";
+import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
+import { myLook, useProfile } from "../store/profile.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet, type Puppet } from "../three/character.js";
@@ -175,7 +175,7 @@ export function BombermanPractice({ onLeave, party }: { onLeave: () => void; par
         if (isWall(c, r)) cells[ci(c, r)] = 1;
         else if (!clear.has(ci(c, r)) && Math.random() < CRATE_PROB) cells[ci(c, r)] = 2;
       }
-    const roster = avatarRoster(useProfile.getState().avatar, N);
+    const roster = avatarRoster(resolveLook(myLook()), N);
     const names = party ? party.seats.map((s) => s.name) : NAMES;
     world.current = {
       cells,
@@ -309,7 +309,7 @@ export function BombermanPractice({ onLeave, party }: { onLeave: () => void; par
     });
 
     // puppets (toon + outline; deterministic roster, one per fighter)
-    const roster = avatarRoster(useProfile.getState().avatar, N);
+    const roster = avatarRoster(resolveLook(myLook()), N);
     interface Pup { puppet: Puppet; lx: number; lz: number; }
     const pups: Pup[] = roster.map((av, i) => {
       const puppet = createPuppet(scene, av, { toon: true, outline: i === 0 ? "#ffd23f" : "#141428" });

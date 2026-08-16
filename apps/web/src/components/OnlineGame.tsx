@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import type { LobbyMessage } from "@party-monopoly/types";
 import { useOnlineStore } from "../store/onlineStore.js";
 import { CURRENCY } from "../theme.js";
-import { avatarById } from "../game/avatars.js";
+import { resolveLook } from "../game/avatars.js";
 import { AvatarThumb } from "./AvatarThumb.js";
 import { IsoBoard } from "./IsoBoard.js";
 import { HowToWin } from "./HowToWin.js";
@@ -227,7 +227,7 @@ function Lobby({
               border: `2px solid ${p.id === lobby.you ? "var(--accent)" : "transparent"}`,
             }}
           >
-            <AvatarThumb av={avatarById(p.avatar)} size={48} />
+            <AvatarThumb av={resolveLook(p.look)} size={48} />
             <span style={{ fontSize: 12, fontWeight: 800, maxWidth: 76, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {p.name}
             </span>

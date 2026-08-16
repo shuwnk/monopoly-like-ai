@@ -12,7 +12,7 @@ import type {
 } from "@party-monopoly/types";
 import { create } from "zustand";
 import { OnlineClient } from "../net/onlineClient.js";
-import { useProfile } from "./profile.js";
+import { myLook, useProfile } from "./profile.js";
 
 export type ConnStatus =
   | "idle"
@@ -201,8 +201,7 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : "connection failed";
 }
 
-// the identity we introduce ourselves with: the persisted profile name + mascot
-function me(): { name: string; avatar: string } {
-  const p = useProfile.getState();
-  return { name: p.name.trim(), avatar: p.avatar };
+// the identity we introduce ourselves with: the persisted profile name + look
+function me(): { name: string; look: ReturnType<typeof myLook> } {
+  return { name: useProfile.getState().name.trim(), look: myLook() };
 }
