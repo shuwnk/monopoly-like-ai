@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MinigameResult } from "@party-monopoly/types";
 import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
 import { myLook, useProfile } from "../store/profile.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 
@@ -325,8 +326,7 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
           continue;
         }
         if (!f.isBot) {
-          const dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-          const dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+          const { dx, dy } = moveVector(keys);
           if (dx || dy) {
             f.lastDX = dx;
             f.lastDY = dy;
@@ -419,7 +419,7 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
     const down = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (isGameKey(k)) e.preventDefault();
     };
     const uph = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     window.addEventListener("keydown", down);

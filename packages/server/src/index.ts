@@ -1,4 +1,5 @@
 import { Server } from "colyseus";
+import { mountAdmin } from "./admin.js";
 import { FloorDropRoom } from "./FloorDropRoom.js";
 import { GameRoom } from "./GameRoom.js";
 
@@ -35,4 +36,8 @@ http?.prependListener("request", (req, res) => {
   res.end("ok");
 });
 
+// operator API — silently absent unless ADMIN_TOKEN is set
+const adminOn = mountAdmin(http);
+
 console.log(`party-monopoly server listening on ${host}:${port}`);
+console.log(adminOn ? "[admin] /admin API enabled (ADMIN_TOKEN set)" : "[admin] disabled — set ADMIN_TOKEN to enable");

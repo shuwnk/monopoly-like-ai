@@ -3,6 +3,7 @@ import { Client, type Room } from "colyseus.js";
 import { FD_GRID, FDClient, FDServer, type FDLobby, type FDOver, type FDRosterEntry, type FDSnapshot, type FDStart } from "@party-monopoly/types";
 import { AVATARS, resolveLook, type Avatar } from "../game/avatars.js";
 import { myLook, useProfile } from "../store/profile.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { TouchStick } from "./TouchStick.js";
 
@@ -118,8 +119,7 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
 
     function sendInput(): void {
       const k = keysRef.current;
-      const dx = (k.has("d") || k.has("arrowright") ? 1 : 0) - (k.has("a") || k.has("arrowleft") ? 1 : 0);
-      const dy = (k.has("s") || k.has("arrowdown") ? 1 : 0) - (k.has("w") || k.has("arrowup") ? 1 : 0);
+      const { dx, dy } = moveVector(k);
       if (dx !== sentRef.current.dx || dy !== sentRef.current.dy) {
         sentRef.current = { dx, dy };
         roomRef.current?.send(FDClient.input, { dx, dy });
@@ -129,7 +129,7 @@ export function OnlineFloorDrop({ onLeave }: { onLeave: () => void }): JSX.Eleme
       if (netRef.current !== "playing") return;
       const key = e.key.toLowerCase();
       keysRef.current.add(key);
-      if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) e.preventDefault();
+      if (isGameKey(key)) e.preventDefault();
       sendInput();
     };
     const up = (e: KeyboardEvent): void => {

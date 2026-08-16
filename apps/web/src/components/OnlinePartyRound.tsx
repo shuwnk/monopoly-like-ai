@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { FD_GRID } from "@party-monopoly/types";
 import { AVATARS, resolveLook, type Avatar } from "../game/avatars.js";
 import { useOnlineStore } from "../store/onlineStore.js";
+import { activeBinds, isGameKey, moveHint, moveVector } from "../game/keybinds.js";
 import { createFloorDropScene, type FDSceneFighter } from "../three/floorDropScene.js";
 import { TouchStick } from "./TouchStick.js";
 
@@ -42,8 +43,7 @@ export function OnlinePartyRound(): JSX.Element {
     let prevTiles = "";
 
     function sendInput(): void {
-      const dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-      const dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+      const { dx, dy } = moveVector(keys);
       if (dx !== sent.dx || dy !== sent.dy) {
         sent.dx = dx;
         sent.dy = dy;
@@ -53,7 +53,7 @@ export function OnlinePartyRound(): JSX.Element {
     const down = (e: KeyboardEvent): void => {
       const key = e.key.toLowerCase();
       keys.add(key);
-      if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) e.preventDefault();
+      if (isGameKey(key)) e.preventDefault();
       sendInput();
     };
     const up = (e: KeyboardEvent): void => {
@@ -122,7 +122,7 @@ export function OnlinePartyRound(): JSX.Element {
         <canvas ref={canvasRef} width={820} height={560} style={{ width: "100%", aspectRatio: "820 / 560", background: "#0a0e15", borderRadius: 8, display: "block" }} />
         <div ref={aliveRef} style={{ position: "absolute", top: 12, left: 16, color: "#fff", fontWeight: 800, fontSize: 18, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Alive: —</div>
         <div ref={timeRef} style={{ position: "absolute", top: 14, right: 16, color: "rgba(255,255,255,0.75)", fontWeight: 700, fontSize: 15, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>0s</div>
-        <div style={{ position: "absolute", top: 14, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>WASD / arrows — or drag anywhere on a phone. Just don&apos;t fall.</div>
+        <div style={{ position: "absolute", top: 14, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>{moveHint(activeBinds())} — or drag anywhere on a phone. Just don&apos;t fall.</div>
 
         {/* only live while the round is running: the placement overlay sits on top of it */}
         {!partyOver && <TouchStick onChange={(dx, dy) => useOnlineStore.getState().sendPartyInput(dx, dy)} />}

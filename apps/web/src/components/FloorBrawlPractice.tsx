@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { myLook, useProfile } from "../store/profile.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
@@ -566,8 +567,7 @@ export function FloorBrawlPractice({ onLeave }: { onLeave: () => void }): JSX.El
         let mvy = 0;
         if (!f.isBot) {
           f.aim = Math.atan2(mouse.y - f.y, mouse.x - f.x);
-          mvx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-          mvy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+          ({ dx: mvx, dy: mvy } = moveVector(keys));
         } else {
           [mvx, mvy] = botThink(f, w, dt);
         }
@@ -606,7 +606,7 @@ export function FloorBrawlPractice({ onLeave }: { onLeave: () => void }): JSX.El
     const down = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", " ", "shift", "q", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (isGameKey(k) || k === "shift" || k === "q") e.preventDefault();
       if (phaseRef.current !== "playing") return;
       const me = world.current!.fighters[0]!;
       if (me.state !== "alive") return;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { avatarRoster, avatarById, type Avatar, resolveLook } from "../game/avatars.js";
 import { myLook, useProfile } from "../store/profile.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet, type Puppet } from "../three/character.js";
@@ -824,8 +825,7 @@ export function BrawlPractice({ onLeave }: { onLeave: () => void }): JSX.Element
         }
 
         if (!b.isBot) {
-          let dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-          let dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+          let { dx, dy } = moveVector(keys);
           if (Math.abs(b.x) > hw) dx += b.x > 0 ? -1 : 1;
           if (Math.abs(b.y) > hh) dy += b.y > 0 ? -1 : 1;
           if (dx || dy) moveBrawler(b, dx, dy, dt, b.kit.move * (b.slowT > 0 ? 0.5 : 1));
@@ -909,7 +909,7 @@ export function BrawlPractice({ onLeave }: { onLeave: () => void }): JSX.Element
     const down = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (isGameKey(k)) e.preventDefault();
     };
     const up = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     const groundRay = new THREE.Raycaster();

@@ -24,6 +24,7 @@ export function Menu({
   onBomber,
   onBarn,
   onShop,
+  onControls,
   onCreate,
   onJoin,
 }: {
@@ -42,6 +43,7 @@ export function Menu({
   onBomber: () => void;
   onBarn: () => void;
   onShop: () => void;
+  onControls: () => void;
   onCreate: (durationSec: number, maxPlayers: number) => void;
   onJoin: (roomId: string) => void;
 }): JSX.Element {
@@ -108,9 +110,14 @@ export function Menu({
                   placeholder="your name"
                   style={{ width: "100%" }}
                 />
-                <button style={{ width: "100%" }} onClick={onShop}>
-                  🎨 Character, colour &amp; hat
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={{ flex: 1 }} onClick={onShop}>
+                    🎨 Character
+                  </button>
+                  <button style={{ flex: 1 }} onClick={onControls}>
+                    ⌨️ Controls
+                  </button>
+                </div>
               </div>
             </div>
           </Card>

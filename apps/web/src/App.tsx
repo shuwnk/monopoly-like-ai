@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { AdminPanel } from "./components/AdminPanel.js";
 import { AirportPractice } from "./components/AirportPractice.js";
 import { BarnBrawlPractice } from "./components/BarnBrawlPractice.js";
 import { BombermanPractice } from "./components/BombermanPractice.js";
 import { BrawlPractice } from "./components/BrawlPractice.js";
+import { Controls } from "./components/Controls.js";
 import { CopaPractice } from "./components/CopaPractice.js";
 import { DuelPractice } from "./components/DuelPractice.js";
 import { FloorBrawlPractice } from "./components/FloorBrawlPractice.js";
@@ -16,7 +18,7 @@ import { WinTest } from "./components/WinTest.js";
 import { useOnlineStore } from "./store/onlineStore.js";
 import { useProfile } from "./store/profile.js";
 
-type Mode = "menu" | "hotseat" | "ai" | "duel" | "airport" | "copa" | "wintest" | "floorbrawl" | "floordrop" | "floordrop-online" | "brawl" | "bomber" | "barn" | "shop" | "online";
+type Mode = "admin" | "controls" | "menu" | "hotseat" | "ai" | "duel" | "airport" | "copa" | "wintest" | "floorbrawl" | "floordrop" | "floordrop-online" | "brawl" | "bomber" | "barn" | "shop" | "online";
 
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("menu");
@@ -39,6 +41,10 @@ export function App(): JSX.Element {
       .then((ok) => {
         if (ok) {
           setMode("online");
+          return;
+        }
+        if (new URLSearchParams(window.location.search).has("admin")) {
+          setMode("admin");
           return;
         }
         const code = new URLSearchParams(window.location.search).get("room")?.trim();
@@ -68,7 +74,9 @@ export function App(): JSX.Element {
   if (mode === "bomber") return <BombermanPractice onLeave={() => setMode("menu")} />;
   if (mode === "barn") return <BarnBrawlPractice onLeave={() => setMode("menu")} />;
   if (mode === "shop") return <Shop onLeave={() => setMode("menu")} />;
+  if (mode === "controls") return <Controls onLeave={() => setMode("menu")} />;
   if (mode === "online") return <OnlineGame onLeave={() => setMode("menu")} />;
+  if (mode === "admin") return <AdminPanel onLeave={() => setMode("menu")} />;
 
   return (
     <Menu
@@ -86,6 +94,7 @@ export function App(): JSX.Element {
       onBomber={() => setMode("bomber")}
       onBarn={() => setMode("barn")}
       onShop={() => setMode("shop")}
+      onControls={() => setMode("controls")}
       onCreate={(durationSec, maxPlayers) => {
         void createRoom(durationSec, maxPlayers);
         setMode("online");

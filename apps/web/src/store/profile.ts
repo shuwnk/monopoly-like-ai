@@ -1,4 +1,5 @@
 import type { PlayerLook } from "@party-monopoly/types";
+import { resolveBinds, setActiveBinds, type BindAction, type Binds } from "../game/keybinds.js";
 import { create } from "zustand";
 
 // Persistent minigame profile: coins earned from playing, unlocked items, and the
@@ -34,6 +35,7 @@ interface Saved {
   name: string; // display name for online play; "" until the player types one
   color: string; // body colour override ("" = the mascot's own palette)
   hat: string; // accessory id ("" = bare-headed)
+  binds: Partial<Record<string, string[]>>; // remapped controls, merged over the defaults
 }
 function load(): Saved {
   try {
@@ -49,12 +51,13 @@ function load(): Saved {
         name: typeof p.name === "string" ? p.name : "",
         color: typeof p.color === "string" ? p.color : "",
         hat: typeof p.hat === "string" ? p.hat : "",
+        binds: typeof p.binds === "object" && p.binds !== null ? p.binds : {},
       };
     }
   } catch {
     /* ignore corrupt storage */
   }
-  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze", name: "", color: "", hat: "" };
+  return { coins: 250, owned: [...STARTER], weapon: "pistol", brawler: "blaster", avatar: "blaze", name: "", color: "", hat: "", binds: {} };
 }
 
 interface ProfileState extends Saved {
@@ -65,6 +68,8 @@ interface ProfileState extends Saved {
   setName: (name: string) => void;
   setColor: (hex: string) => void;
   setHat: (id: string) => void;
+  setBind: (action: BindAction, keys: string[]) => void;
+  resetBindsToDefault: () => void;
   award: (n: number) => void;
 }
 
@@ -73,9 +78,9 @@ export const MAX_NAME_LEN = 14;
 
 export const useProfile = create<ProfileState>((set, get) => {
   const persist = (): void => {
-    const { coins, owned, weapon, brawler, avatar, name, color, hat } = get();
+    const { coins, owned, weapon, brawler, avatar, name, color, hat, binds } = get();
     try {
-      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar, name, color, hat }));
+      localStorage.setItem(KEY, JSON.stringify({ coins, owned, weapon, brawler, avatar, name, color, hat, binds }));
     } catch {
       /* ignore */
     }
@@ -111,6 +116,16 @@ export const useProfile = create<ProfileState>((set, get) => {
       set({ hat: id });
       persist();
     },
+    setBind: (action, keys) => {
+      set({ binds: { ...get().binds, [action]: keys } });
+      setActiveBinds(resolveBinds(get().binds)); // live: games read this next frame
+      persist();
+    },
+    resetBindsToDefault: () => {
+      set({ binds: {} });
+      setActiveBinds(resolveBinds({}));
+      persist();
+    },
     award: (n) => {
       set({ coins: get().coins + Math.max(0, Math.round(n)) });
       persist();
@@ -129,3 +144,11 @@ export function myLook(): PlayerLook {
   const p = useProfile.getState();
   return { av: p.avatar, color: p.color, hat: p.hat };
 }
+
+// The player's controls, defaults filled in.
+export function myBinds(): Binds {
+  return resolveBinds(useProfile.getState().binds);
+}
+
+// seed the shared bindings from the saved profile at startup
+setActiveBinds(myBinds());

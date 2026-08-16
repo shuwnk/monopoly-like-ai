@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { MinigameResult } from "@party-monopoly/types";
 import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
 import { myLook, useProfile } from "../store/profile.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet, type Puppet } from "../three/character.js";
@@ -524,8 +525,7 @@ export function BombermanPractice({ onLeave, party }: { onLeave: () => void; par
         let dx = 0;
         let dy = 0;
         if (!p.isBot) {
-          dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-          dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+          ({ dx, dy } = moveVector(keys));
           if (dx !== 0 && dy !== 0) dy = 0;
         } else {
           [dx, dy] = botThink(p, dt);
@@ -574,7 +574,7 @@ export function BombermanPractice({ onLeave, party }: { onLeave: () => void; par
     const down = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", " ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (isGameKey(k)) e.preventDefault();
       if (phaseRef.current === "playing" && k === " ") {
         const me = world.current!.players[0]!;
         if (me.alive) placeBomb(me);

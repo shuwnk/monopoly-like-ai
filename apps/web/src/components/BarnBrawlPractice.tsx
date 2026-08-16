@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { MinigameResult } from "@party-monopoly/types";
 import { avatarRoster, type Avatar, resolveLook } from "../game/avatars.js";
 import { animateChar, buildAvatar3D, type Char3D } from "../game/avatar3d.js";
+import { bound, isGameKey, moveVector } from "../game/keybinds.js";
 import { createAnnouncer } from "../game/announcer.js";
 import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
@@ -1321,8 +1322,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // screen-right in this right-handed, +z-forward frame is -(up × fwd)
       const right = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
       const canMove = alive && playing;
-      const fi = canMove ? (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0) : 0;
-      const si = canMove ? (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0) : 0;
+      // movement here is camera-relative: "up" drives forward, "right" strafes
+      const mv = moveVector(keys);
+      const fi = canMove ? -mv.dy : 0;
+      const si = canMove ? mv.dx : 0;
       // target velocity from input, then ease toward it (smooth start/stop)
       let tx = fwd.x * fi + right.x * si;
       let tz = fwd.z * fi + right.z * si;
@@ -1520,8 +1523,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const kd = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", " "].includes(k)) e.preventDefault();
-      if (k === " " && grounded && playerDead <= 0) vel.y = JUMP_V;
+      if (isGameKey(k)) e.preventDefault();
+      if (bound("action", k) && grounded && playerDead <= 0) vel.y = JUMP_V;
     };
     const ku = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     const mv = (e: MouseEvent): void => {

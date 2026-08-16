@@ -308,6 +308,84 @@ export class GameRoom extends Room {
     this.broadcastState();
   }
 
+  // --- admin (reached only through the token-guarded /admin API in admin.ts) ---
+
+  // Everything needed to watch and diagnose this room from outside. Includes the
+  // full game state so the panel can render the real board, not a summary of it.
+  adminSnapshot() {
+    return {
+      roomId: this.roomId,
+      started: this.started,
+      clients: this.clients.length,
+      maxClients: this.maxClients,
+      endsAt: this.endsAt,
+      durationSec: this.durationSec,
+      phase: this.game?.phase ?? "LOBBY",
+      // who holds which seat, and whether they're currently connected
+      seats: [...this.seats.values()].sort().map((id) => ({
+        id,
+        name: this.nameOf(id),
+        look: this.lookOf(id),
+        connected: [...this.seats.values()].includes(id),
+      })),
+      looks: this.looks(),
+      // what the room is waiting on — the usual reason a game looks stuck
+      waitingOn: this.game && this.game.phase !== "GAME_OVER" ? (this.game.players[this.game.activePlayerIndex]?.id ?? null) : null,
+      duel: this.showdownArmed ? this.duellists : null,
+      partyRound: !!this.partySim,
+      state: this.game,
+    };
+  }
+
+  // Operator actions for a game that has gone wrong. Deliberately expressed in
+  // terms the engine already validates — nothing here writes state directly.
+  adminAction(type: string, arg?: string) {
+    switch (type) {
+      case "nudge":
+        // play the current player's turn for them — the same fallback a timeout
+        // would fire, but now. Unsticks a room waiting on someone who left.
+        if (!this.game || this.game.phase === "GAME_OVER") return { ok: false, error: "no live game" };
+        this.autoResolvePick();
+        return { ok: true, phase: this.game.phase };
+      case "kick": {
+        const seat = [...this.seats.values()].find((id) => id === arg);
+        if (!seat) return { ok: false, error: "no such seat" };
+        this.forfeit(seat);
+        return { ok: true };
+      }
+      case "reset":
+        return this.resetMatch();
+      case "close":
+        this.disconnect();
+        return { ok: true };
+      default:
+        return { ok: false, error: `unknown action: ${type}` };
+    }
+  }
+
+  // Restart the match with the players who are still here, keeping the room and
+  // everyone's connection. The clock restarts too.
+  private resetMatch() {
+    const seated = [...this.seats.values()].sort();
+    if (seated.length < MIN_PLAYERS) return { ok: false, error: "not enough players to restart" };
+    this.clearTimers();
+    this.abortPartyRound();
+    this.showdownArmed = false;
+    this.duellists = [];
+    this.taps.clear();
+    this.pendingLeaves = [];
+    this.game = createInitialState({
+      seed: Date.now(),
+      players: seated.map((id) => ({ id, name: this.nameOf(id), isAI: false })),
+      tunables: { partyGames: ["floordrop"] },
+    });
+    this.endsAt = Date.now() + this.durationSec * 1000;
+    this.gameTimer = setTimeout(() => this.timeUp(), this.durationSec * 1000);
+    this.broadcastState();
+    this.schedulePickFallback();
+    return { ok: true, players: seated.length };
+  }
+
   private onAction(client: Client, msg: ActionMessage) {
     if (!this.game) return;
     const you = this.seats.get(client.sessionId);

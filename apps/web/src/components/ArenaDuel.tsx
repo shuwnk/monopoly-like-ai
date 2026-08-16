@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { MinigameRequest, MinigameResult } from "@party-monopoly/types";
 import { avatarRoster, resolveLook } from "../game/avatars.js";
 import { myLook } from "../store/profile.js";
+import { isGameKey, moveVector } from "../game/keybinds.js";
 import { createStage } from "../three/stage.js";
 import { frameArena } from "../three/cameraRig.js";
 import { createPuppet } from "../three/character.js";
@@ -137,7 +138,7 @@ export function ArenaDuel({
     const kd = (e: KeyboardEvent): void => {
       const k = e.key.toLowerCase();
       keys.add(k);
-      if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (isGameKey(k)) e.preventDefault();
     };
     const ku = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     window.addEventListener("keydown", kd);
@@ -197,8 +198,7 @@ export function ArenaDuel({
           let mx = 0;
           let mz = 0;
           if (!p.ai) {
-            mx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-            mz = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+            ({ dx: mx, dy: mz } = moveVector(keys));
           } else {
             const tc = nearestCoin(p.x, p.z);
             if (tc) {
