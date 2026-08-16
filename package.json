@@ -5,7 +5,7 @@
   "description": "Party Monopoly — faithful board with party minigames. Transport-independent, deterministic engine.",
   "type": "module",
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "workspaces": [
     "packages/*",
