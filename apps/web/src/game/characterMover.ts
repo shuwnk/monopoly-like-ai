@@ -100,6 +100,15 @@ export class CharacterMover {
     this.sz = this.fx;
   }
 
+  /**
+   * An input that moves along a world-space planar direction whatever the forward basis.
+   * The AI path in the original builds `CharacterMoverInput(new Vector2(dir.x, dir.z))`
+   * against the default (0,0,1) forward, i.e. the vector is already a world direction.
+   */
+  worldInput(dx: number, dz: number, jump: boolean): MoverInput {
+    return { axisX: dx * this.sx + dz * this.sz, axisY: dx * this.fx + dz * this.fz, jump };
+  }
+
   /** drop all motion (respawn / round reset — `mover.Velocity = Vector3.zero`) */
   reset(): void {
     this.vx = this.vy = this.vz = 0;

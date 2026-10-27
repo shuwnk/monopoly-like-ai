@@ -87,6 +87,17 @@ describe("CharacterMover — planar steering", () => {
     expect(m.vz).toBeCloseTo(8, 6);
   });
 
+  it("worldInput() moves along a world direction whatever the forward basis is", () => {
+    const m = standing();
+    m.setForward(0.6, 0.8);
+    groundFrame(m, m.worldInput(1, 0, false), 1);
+    expect(m.vx).toBeCloseTo(8, 6);
+    expect(m.vz).toBeCloseTo(0, 6);
+    groundFrame(m, m.worldInput(0, -1, false), 1);
+    expect(m.vx).toBeCloseTo(0, 6);
+    expect(m.vz).toBeCloseTo(-8, 6);
+  });
+
   it("strafes along the same right vector the ThirdPersonCamera uses", () => {
     for (const yaw of [0, 37, 90, 200, 315]) {
       const cam = new ThirdPersonCamera(BARN_BRAWL_CAMERA);
