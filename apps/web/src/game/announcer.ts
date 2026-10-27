@@ -90,7 +90,7 @@ export function createAnnouncer(): Announcer {
       if (totalKills === 1) at += firstBloodSfx(at);
       if (headshot) at += headshotSfx(at);
       if (chain >= 2) at += multiKillSfx(chain, at);
-      if (SPREE_AT[spree]) at += spreeSfx(at);
+      if (SPREE_AT[spree]) spreeSfx(at); // last sting in the stack, nothing chains after it
     },
     onDeath() {
       void ac.resume();
