@@ -1,0 +1,23 @@
+name: PR references an issue
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  issue-link:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Description names an issue
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$BODY" | grep -Eiq '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?|part of) +#[0-9]+'; then
+            echo "Issue reference found."
+          else
+            echo "::error::The PR description must reference its issue, e.g. 'Closes #12' (or 'Refs #12' / 'Part of #12' when it doesn't finish it)."
+            exit 1
+          fi
