@@ -8,7 +8,8 @@ import { createAnnouncer } from "../game/announcer.js";
 import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 import { BARN_BRAWL_MOVER, CharacterMover } from "../game/characterMover.js";
-import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type RaycastFn } from "../game/thirdPersonCamera.js";
+import { DigitalAxis } from "../game/digitalAxis.js";
+import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type CameraPose, type RaycastFn } from "../game/thirdPersonCamera.js";
 import { COUNTDOWN_LENGTH, countdownNumber, feedAlpha, makeFallers, placementDelay, resultsBrightness, ROUND_FLOW, stepFallers, timerPulseScale, type Faller } from "../game/roundFlow.js";
 
 // "Barn Brawl" — a port of Pummel Party's Barn Brawl: a one-shot shotgun scramble in a
@@ -25,6 +26,12 @@ import { COUNTDOWN_LENGTH, countdownNumber, feedAlpha, makeFallers, placementDel
 // WASD move · mouse look · click fire · Space jump · click the view to capture the mouse.
 
 const STEP_UP = 0.55; // stair rise climbed without a jump (the CharacterController's stepOffset)
+const GROUND_SNAP = 0.45; // `slopeAdjustMax`: SmoothSlope pulls a grounded body onto ground this far below
+// the player root is the capsule centre: the character mesh is parented 0.954 below it
+// (prefab-dumps.txt, SimpleModPlayer). The camera orbits it and the killer cam aims at it.
+const CAPSULE_CENTER = 0.954;
+const BODY_TURN = 720; // PlayerAnimation.playerRotationSpeed, toward root yaw + 10°
+const BODY_YAW_OFFSET = 10; // `SetPlayerRotation(rotation.Value + 10f)`
 const ROUND_LENGTH = 75; // BarnBrawlController.roundLength 75
 const KILL_SCORE = 50; // ApplyDamage: `player.Score += 50`
 const DEATH_TIME = 4; // `deathTimer = new ActionTimer(4f)`
@@ -881,10 +888,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const losRay = new THREE.Raycaster();
     const camRay = new THREE.Raycaster();
     const camColliders = [...blockers, ...walkables]; // camera doesn't clip through these
-    // the ThirdPersonCamera's wall probe: from just above the feet (so the floor the
-    // character stands on doesn't count) out toward the wanted camera spot
+    // the ThirdPersonCamera's wall probe: from the capsule centre out toward the wanted
+    // camera spot
     const camProbe: RaycastFn = (o, d, max) => {
-      camRay.set(new THREE.Vector3(o.x, o.y + 0.1, o.z), new THREE.Vector3(d.x, d.y, d.z));
+      camRay.set(new THREE.Vector3(o.x, o.y, o.z), new THREE.Vector3(d.x, d.y, d.z));
       camRay.far = max;
       const h = camRay.intersectObjects(camColliders, false)[0];
       return h ? h.distance : null;
@@ -924,15 +931,15 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     }
 
     // one body step for the player and the bots: horizontal axis by axis against the
-    // blockers (a wall stops that axis dead), then gravity onto the highest walkable with
-    // a smooth step-up; the mover is told whether it landed
+    // blockers (a wall stops that axis but, like CharacterController.Move, leaves the
+    // mover's velocity alone), then gravity onto the highest walkable with a smooth
+    // step-up and SmoothSlope's snap-down; the mover is told whether it landed
     function stepBody(p: THREE.Vector3, m: CharacterMover, dt: number): void {
+      const wasGrounded = m.grounded;
       const sxm = m.vx * dt;
       const szm = m.vz * dt;
       if (!blockedMove(p.x, p.y, p.z, sxm, 0)) p.x += sxm;
-      else m.vx = 0;
       if (!blockedMove(p.x, p.y, p.z, 0, szm)) p.z += szm;
-      else m.vz = 0;
       p.x = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, p.x));
       p.z = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, p.z));
       const ground = groundAt(p.x, p.y, p.z);
@@ -943,6 +950,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         landed = true;
       } else if (ground > p.y && ground - p.y <= STEP_UP) {
         ny = Math.min(ground, p.y + 9 * dt); // climb steps smoothly instead of snapping
+        landed = true;
+      } else if (wasGrounded && m.vy <= 0 && p.y - ground > 0 && p.y - ground < GROUND_SNAP) {
+        ny = ground; // walked off a small ledge: stay planted instead of going airborne
         landed = true;
       }
       p.y = ny;
@@ -1270,7 +1280,11 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       pos.copy(SPAWNS[0]!);
       mover.reset();
       tpCam.resetTo(tpCam.yaw);
+      // frame the spawn point now; the camera holds this while everyone drops in
+      applyPose(tpCam.update(_pivot.set(pos.x, pos.y + CAPSULE_CENTER, pos.z), camProbe, 0));
       jumpQueued = false;
+      axisH.reset();
+      axisV.reset();
       fireQueued = false;
       player.visible = true;
       for (const e of enemies) {
@@ -1386,6 +1400,13 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const muzzle = new THREE.Vector3();
     const _tmp = new THREE.Vector3();
     const _look = new THREE.Camera(); // scratch for the killer-cam target rotation
+    const _pivot = new THREE.Vector3();
+    const axisH = new DigitalAxis(); // Rewired Horizontal / Vertical (gravity 3, sensitivity 3)
+    const axisV = new DigitalAxis();
+    function applyPose(pose: CameraPose): void {
+      camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+      camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
+    }
     function frame(now: number): void {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -1509,20 +1530,29 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       mover.setForward(fwd.x, fwd.z);
       const jumpNow = jumpQueued && canMove;
       jumpQueued = false;
+      // the keys drive Rewired's digital axes (⅓ s to full input), the axes drive the mover
+      if (!canMove) {
+        axisH.reset();
+        axisV.reset();
+      }
+      const ax = axisH.update(canMove ? mv.dx : 0, dt);
+      const ay = axisV.update(canMove ? -mv.dy : 0, dt);
       if (!playerDropping) {
-        mover.calculateVelocity({ axisX: canMove ? mv.dx : 0, axisY: canMove ? -mv.dy : 0, jump: jumpNow }, dt);
+        mover.calculateVelocity({ axisX: ax, axisY: ay, jump: jumpNow }, dt);
         stepBody(pos, mover, dt);
       }
       if (pos.y < -10) {
         pos.set(-12, 0, 0);
         mover.reset();
       }
-      // the character always faces where you're aiming (camera direction), and
-      // strafes/backpedals — it does NOT spin toward its movement direction
-      let dRot = tpCam.yawRad - player.rotation.y;
+      // the character faces where you're aiming and strafes/backpedals — it does NOT spin
+      // toward its movement direction. The root snaps to the camera yaw; the model follows
+      // at 720°/s to yaw + 10° (`MoveTowardsAngle`), which is what we draw.
+      let dRot = tpCam.yawRad + BODY_YAW_OFFSET * DEG - player.rotation.y;
       while (dRot > Math.PI) dRot -= Math.PI * 2;
       while (dRot < -Math.PI) dRot += Math.PI * 2;
-      player.rotation.y += dRot * Math.min(1, dt * 18);
+      const turnStep = BODY_TURN * DEG * dt;
+      player.rotation.y += Math.abs(dRot) <= turnStep ? dRot : Math.sign(dRot) * turnStep;
       player.position.copy(pos);
       // `ShotgunStrength`: the arms come up onto the gun only while holding one
       animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: !playerDropping && mover.grounded, aim: holding ? 1 : 0 });
@@ -1530,15 +1560,15 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // ── camera ──
       recoil = Math.max(0, recoil - dt * (0.4 + recoil * 5));
       muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 90);
-      if (alive) {
-        const pose = tpCam.update(pos, camProbe, dt, -recoil * THREE.MathUtils.RAD2DEG);
-        camera.position.set(pose.position.x, pose.position.y, pose.position.z);
-        camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
-      } else {
+      if (alive && mode !== "spawning") {
+        // orbit the capsule centre; during the drop the camera holds the spawn framing
+        // (`ForcePosition` while players are being enabled) and the body falls into view
+        applyPose(tpCam.update(_pivot.set(pos.x, pos.y + CAPSULE_CENTER, pos.z), camProbe, dt, -recoil * THREE.MathUtils.RAD2DEG));
+      } else if (!alive) {
         // killer cam: the camera stays put and turns toward whoever got us, faster the
         // further off-axis they are (`RotateTowards`, clamp(1 − dot, 0.06, 2) × 250°/s)
         const kp = _tmp.copy(fighterPos(killerId));
-        kp.y += 0.875;
+        kp.y += CAPSULE_CENTER;
         _look.position.copy(camera.position);
         _look.lookAt(kp);
         const toKiller = kp.sub(camera.position).normalize();
@@ -1708,7 +1738,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     };
     const ku = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     const mvs = (e: MouseEvent): void => {
-      if (document.pointerLockElement !== canvas) return;
+      if (document.pointerLockElement !== canvas || mode !== "playing") return; // `RotateCamera` only while Playable
       tpCam.rotate(e.movementX, e.movementY); // 0.18°/px, pitch clamped to ±89°
     };
     const mdn = (e: MouseEvent): void => {

@@ -32,7 +32,7 @@ describe("ThirdPersonCamera — pose", () => {
     const cam = new ThirdPersonCamera(BARN_BRAWL_CAMERA);
     cam.pitch = 44.5; // half of the 89° clamp → orbit at 50 %, rise at half of (0.875 + 1)
     const pose = cam.update(feet, open, dt);
-    const num = 1.75 / 2 + 1;
+    const num = 1.9 / 2 + 1;
     expect(pose.position.z).toBeCloseTo(-1, 6);
     expect(pose.position.y).toBeCloseTo(1 + num * 0.5, 6);
     expect(pose.lookAt.y).toBeCloseTo(pose.position.y - num * 0.5 * 1.9, 6);
