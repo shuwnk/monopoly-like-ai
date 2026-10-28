@@ -15,10 +15,10 @@ import {
   closestCrate,
   crateAt,
   crateCenter,
+  crateCost,
   crateDropping,
   cratePath,
   crateSolid,
-  crateWalkable,
   idleCrate,
   randomUnit,
   scoreFor,
@@ -147,7 +147,7 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
     const crates: CrateDrop[] = Array.from({ length: n * n }, () => idleCrate());
     const crateIdx = (x: number, y: number): number => x * n + y;
     const crateRefs = (): CrateRef[] => crates.map((c, i) => ({ x: Math.floor(i / n), y: i % n, dropping: crateDropping(c) }));
-    const walkable = (x: number, y: number): boolean => crateWalkable(crates[crateIdx(x, y)]!);
+    const stepCost = (x: number, y: number): number => crateCost(crates[crateIdx(x, y)]!);
     let scheduler = new WaveScheduler();
 
     // ── fighters ──
@@ -302,7 +302,7 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
       b.pathTimer -= dt;
       if (b.pathTimer <= 0) {
         b.pathTimer = 0.1 + rand() * 0.05;
-        b.path = cratePath(cellOf(b.pos.x, b.pos.z), cellOf(b.target.x, b.target.z), walkable);
+        b.path = cratePath(cellOf(b.pos.x, b.pos.z), cellOf(b.target.x, b.target.z), stepCost);
       }
       // drop waypoints already reached
       while (b.path.length) {
@@ -531,15 +531,19 @@ export function FloorDropPractice({ onLeave, party }: { onLeave: () => void; par
             ay = axisV.update(playable ? -mv.dy : 0, dt);
             jump = jumpQueued && playable;
           } else if (playable) {
+            // the AI steers in world space; `worldInput` turns that into the mover's axes
             const d = botInput(f, dt);
-            ax = d.dx;
-            ay = d.dz;
+            const inp = f.mover.worldInput(d.dx, d.dz, false);
+            ax = inp.axisX;
+            ay = inp.axisY;
           }
           if (f.mover.calculateVelocity({ axisX: ax, axisY: ay, jump }, dt)) blip(420, 0.08, "triangle", 0.05, 640);
           stepBody(f, dt);
           // `RotateTowards(LookRotation(movementAxis), 1500°/s)`: the body faces the input direction
           if (ax !== 0 || ay !== 0) {
-            const want = Math.atan2(ax, ay);
+            // with forward (0, 1) the mover's strafe axis runs along −x (screen-right), so the
+            // world direction of the input is (−ax, ay); the rig's yaw basis is (sin, cos)
+            const want = Math.atan2(-ax, ay);
             let d = want - f.yaw;
             while (d > Math.PI) d -= Math.PI * 2;
             while (d < -Math.PI) d += Math.PI * 2;

@@ -416,35 +416,48 @@ export interface Cell {
 }
 
 /**
- * A stand-in for the NavMeshAgent: a 4-neighbour BFS over walkable crates from `from` toward
- * `to`, ending on the reachable crate nearest the goal when the goal itself is gone (the
- * agent's `pathEndPosition` then differs from the target and the bot waits at the edge).
- * Returns the cells after `from`, or [] when there is nowhere better to go.
+ * A stand-in for the NavMeshAgent: a shortest path over the crates from `from` toward `to`,
+ * where `cost(x, y)` is the price of stepping onto a crate (1 for a resting crate, more for
+ * one that is shaking, Infinity for a gap). It ends on the reachable crate nearest the goal
+ * when the goal itself is gone (the agent's `pathEndPosition` then differs from the target
+ * and the bot waits at the edge). Returns the cells after `from`, or [] when there is
+ * nowhere better to go.
  */
-export function cratePath(from: Cell, to: Cell, walkable: (x: number, y: number) => boolean): Cell[] {
+export function cratePath(from: Cell, to: Cell, cost: (x: number, y: number) => number): Cell[] {
   const n = BREAKING_BLOCKS.dimensions;
   const key = (c: Cell): number => c.y * n + c.x;
+  const dist = new Map<number, number>();
   const prev = new Map<number, number>();
-  const queue: Cell[] = [from];
+  const open: Array<{ c: Cell; d: number }> = [{ c: from, d: 0 }];
+  dist.set(key(from), 0);
   prev.set(key(from), -1);
   let best = from;
-  let bestD = Math.hypot(from.x - to.x, from.y - to.y);
-  while (queue.length) {
-    const c = queue.shift()!;
-    const d = Math.hypot(c.x - to.x, c.y - to.y);
-    if (d < bestD) {
-      bestD = d;
+  let bestGoal = Math.hypot(from.x - to.x, from.y - to.y);
+  while (open.length) {
+    // Dijkstra on a 10 × 10 grid: a linear scan for the cheapest open cell is plenty
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (open[i]!.d < open[bi]!.d) bi = i;
+    const { c, d } = open.splice(bi, 1)[0]!;
+    if (d > (dist.get(key(c)) ?? Infinity)) continue;
+    const g = Math.hypot(c.x - to.x, c.y - to.y);
+    if (g < bestGoal - 1e-9) {
+      bestGoal = g;
       best = c;
     }
-    if (d === 0) break;
+    if (g === 0) break;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const nx = c.x + dx;
       const ny = c.y + dy;
       if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+      const w = cost(nx, ny);
+      if (!Number.isFinite(w)) continue;
       const k = ny * n + nx;
-      if (prev.has(k) || !walkable(nx, ny)) continue;
-      prev.set(k, key(c));
-      queue.push({ x: nx, y: ny });
+      const nd = d + w;
+      if (nd < (dist.get(k) ?? Infinity)) {
+        dist.set(k, nd);
+        prev.set(k, key(c));
+        open.push({ c: { x: nx, y: ny }, d: nd });
+      }
     }
   }
   const path: Cell[] = [];
@@ -454,4 +467,11 @@ export function cratePath(from: Cell, to: Cell, walkable: (x: number, y: number)
     k = prev.get(k)!;
   }
   return path.reverse();
+}
+
+/** the bots' price of stepping onto a crate: resting 1, shaking 3 (still solid, but a gamble), gone impassable */
+export function crateCost(c: CrateDrop): number {
+  if (c.phase === "idle") return 1;
+  if (c.phase === "shake") return 3;
+  return Infinity;
 }

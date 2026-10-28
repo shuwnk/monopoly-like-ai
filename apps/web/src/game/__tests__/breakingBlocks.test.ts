@@ -6,6 +6,7 @@ import {
   closestCrate,
   crateAt,
   crateCenter,
+  crateCost,
   crateDropping,
   cratePath,
   crateSolid,
@@ -205,15 +206,37 @@ describe("bot helpers", () => {
     expect(closestCrate(crates, from, true, 0, 5)).toBeNull();
   });
 
-  it("paths around unwalkable crates and stops at the edge when the goal is gone", () => {
+  it("paths around gaps and stops at the edge when the goal is gone", () => {
     const hole = new Set(["5,5", "5,4", "5,6", "5,3", "5,7", "5,2", "5,8", "5,1", "5,9"]); // a wall with a gap at y 0
-    const walkable = (x: number, y: number): boolean => !hole.has(`${x},${y}`);
-    const around = cratePath({ x: 4, y: 5 }, { x: 6, y: 5 }, walkable);
+    const cost = (x: number, y: number): number => (hole.has(`${x},${y}`) ? Infinity : 1);
+    const around = cratePath({ x: 4, y: 5 }, { x: 6, y: 5 }, cost);
     expect(around.at(-1)).toEqual({ x: 6, y: 5 });
-    expect(around.every((c) => walkable(c.x, c.y))).toBe(true);
+    expect(around.every((c) => cost(c.x, c.y) === 1)).toBe(true);
     expect(around.length).toBe(12); // down to y 0, across, back up
-    const nearest = cratePath({ x: 0, y: 5 }, { x: 5, y: 5 }, walkable);
+    const nearest = cratePath({ x: 0, y: 5 }, { x: 5, y: 5 }, cost);
     expect(nearest.at(-1)).toEqual({ x: 4, y: 5 });
-    expect(cratePath({ x: 4, y: 5 }, { x: 4, y: 5 }, walkable)).toEqual([]);
+    expect(cratePath({ x: 4, y: 5 }, { x: 4, y: 5 }, cost)).toEqual([]);
+  });
+
+  it("crosses shaking crates when that is the only way off, but prefers a resting route", () => {
+    const shaking = new Set(["5,5", "5,4", "5,6", "5,3", "5,7", "5,2", "5,8", "5,1"]); // the wall is shaking, gap at y 0 and y 9
+    const cost = (x: number, y: number): number => (shaking.has(`${x},${y}`) ? 3 : 1);
+    const through = cratePath({ x: 4, y: 5 }, { x: 6, y: 5 }, cost);
+    expect(through).toEqual([{ x: 5, y: 5 }, { x: 6, y: 5 }]); // 3 + 1 beats a 10+ cell detour
+    const far = cratePath({ x: 4, y: 0 }, { x: 6, y: 0 }, cost);
+    expect(far).toEqual([{ x: 5, y: 0 }, { x: 6, y: 0 }]); // the gap is right there
+    const costly = (x: number, y: number): number => (shaking.has(`${x},${y}`) ? 40 : 1);
+    const detour = cratePath({ x: 4, y: 1 }, { x: 6, y: 1 }, costly);
+    expect(detour.some((c) => c.x === 5 && c.y === 0)).toBe(true); // a 4-step detour beats a 40-cost crossing
+  });
+
+  it("prices crates by phase for the bots", () => {
+    const c = idleCrate();
+    expect(crateCost(c)).toBe(1);
+    startCrateDrop(c, 1, () => 0.5);
+    expect(crateCost(c)).toBe(3);
+    const r = () => 0.5;
+    while (c.phase === "shake") stepCrate(c, DT, r);
+    expect(crateCost(c)).toBe(Infinity);
   });
 });
