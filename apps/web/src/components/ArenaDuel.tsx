@@ -268,7 +268,6 @@ export function ArenaDuel({
       void ac.close();
       stage.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
