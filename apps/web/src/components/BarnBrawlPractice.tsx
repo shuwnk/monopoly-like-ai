@@ -7,15 +7,18 @@ import { bound, isGameKey, moveVector } from "../game/keybinds.js";
 import { createAnnouncer } from "../game/announcer.js";
 import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
+import { BARN_BRAWL_MOVER, CharacterMover } from "../game/characterMover.js";
+import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type RaycastFn } from "../game/thirdPersonCamera.js";
 
-// "Barn Brawl" — a 3D third-person arena shooter (Pummel-Party style). MILESTONE 1:
-// walk/look/jump around a two-level barn with stairs and cover, with proper
-// collision. Weapons, bots and scoring come next.
+// "Barn Brawl" — a 3D third-person arena shooter, a port of Pummel Party's Barn Brawl.
+// The player runs on the ported CharacterMover and is framed by the ported
+// ThirdPersonCamera (../game/characterMover.ts, ../game/thirdPersonCamera.ts carry the
+// extracted tuning and cite it). Bots still use the older mover until the scramble
+// rules land (#4).
 // WASD move · mouse look · Space jump · click to capture the mouse (Esc to release).
 
-const GRAV = 22;
-const MOVE_SPEED = 6.4;
-const JUMP_V = 8.4;
+const GRAV = 22; // bots only — the player uses BARN_BRAWL_MOVER.gravity (30)
+const JUMP_V = 8.4; // bots only — the player uses BARN_BRAWL_MOVER.jumpVelocity (10)
 const STEP_UP = 0.55;
 const MATCH_TIME = 90; // seconds per round
 const COUNTDOWN = 3; // pre-round countdown
@@ -115,7 +118,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     scene.background = new THREE.Color("#140e07");
     scene.fog = new THREE.Fog("#1b1208", 14, 52);
 
-    const camera = new THREE.PerspectiveCamera(72, W / H, 0.1, 300);
+    const camera = new THREE.PerspectiveCamera(PUMMEL_FOV, W / H, 0.1, 300); // 70° vertical, every Pummel Party minigame camera
 
     // ── lights (dim, moody barn + one warm low sun through the boards) ──
     scene.add(new THREE.HemisphereLight("#ffe6bf", "#221810", 0.34));
@@ -340,13 +343,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       new THREE.Vector3(10, 0, 14),
     ];
     const pos = SPAWNS[0]!.clone();
-    const vel = new THREE.Vector3();
-    const hvel = new THREE.Vector3(); // smoothed horizontal velocity
-    let yaw = 0;
-    let pitch = -0.15;
-    let grounded = false;
-    let ads = false; // right-click aim-down
-    let aimT = 0; // 0 = hip, 1 = aiming (smoothed)
+    const mover = new CharacterMover(BARN_BRAWL_MOVER); // speed 8 · accel 55 · gravity 30 · jump 10
+    const tpCam = new ThirdPersonCamera(BARN_BRAWL_CAMERA); // 2 back · 1 up · 0.5 off the right shoulder
+    let jumpQueued = false; // Space edge; the mover decides (ground / coyote / buffer)
     const keys = new Set<string>();
     const ray = new THREE.Raycaster();
     ray.far = 5;
@@ -631,7 +630,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       recoil += gd.kick;
       const base = new THREE.Vector3();
       camera.getWorldDirection(base);
-      const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const fwd = tpCam.forward();
       const muzzle = new THREE.Vector3(pos.x + fwd.x * 0.7, pos.y + 1.05, pos.z + fwd.z * 0.7);
       muzzleLight.position.copy(muzzle);
       muzzleLight.color.set(gd.color); // each gun flashes in its own colour
@@ -858,7 +857,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const cands: Cand[] = [];
       if (playerDead <= 0 && playerMercyT <= 0) {
         const d = Math.hypot(pos.x - p.x, pos.z - p.z);
-        if (d <= 60) cands.push({ id: PLAYER_ID, x: pos.x, z: pos.z, y: pos.y, eye: pos.y + 1.35, dist: d, los: losClear(p.x, eyeP, p.z, pos.x, pos.y + 1.35, pos.z), vx: hvel.x, vz: hvel.z, isPlayer: true });
+        if (d <= 60) cands.push({ id: PLAYER_ID, x: pos.x, z: pos.z, y: pos.y, eye: pos.y + 1.35, dist: d, los: losClear(p.x, eyeP, p.z, pos.x, pos.y + 1.35, pos.z), vx: mover.vx, vz: mover.vz, isPlayer: true });
       }
       for (const o of enemies) {
         if (o === e || !o.alive) continue;
@@ -1140,6 +1139,14 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const losRay = new THREE.Raycaster();
     const camRay = new THREE.Raycaster();
     const camColliders = [...blockers, ...walkables]; // camera doesn't clip through these
+    // the ThirdPersonCamera's wall probe: from just above the feet (so the floor the
+    // character stands on doesn't count) out toward the wanted camera spot
+    const camProbe: RaycastFn = (o, d, max) => {
+      camRay.set(new THREE.Vector3(o.x, o.y + 0.1, o.z), new THREE.Vector3(d.x, d.y, d.z));
+      camRay.far = max;
+      const h = camRay.intersectObjects(camColliders, false)[0];
+      return h ? h.distance : null;
+    };
     // highest walkable surface just below a point (for standing / step-up)
     function groundAt(px: number, py: number, pz: number): number {
       ray.set(new THREE.Vector3(px, py + 2, pz), DOWN);
@@ -1197,8 +1204,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       botBudget = BOT_DPS_CAP;
       playerMercyT = 0;
       pos.copy(SPAWNS[0]!);
-      vel.set(0, 0, 0);
-      hvel.set(0, 0, 0);
+      mover.reset();
+      tpCam.resetTo(tpCam.yaw);
+      jumpQueued = false;
       player.visible = true;
       for (const e of enemies) {
         e.kills = 0;
@@ -1309,8 +1317,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         if (playerDead <= 0) {
           playerHp = 100;
           pos.copy(pickSpawn());
-          vel.set(0, 0, 0);
-          hvel.set(0, 0, 0);
+          mover.reset();
+          tpCam.resetTo(tpCam.yaw); // `ZRotation = 5f` on respawn, keep the facing
           firing = false; // require a fresh click, don't auto-fire on respawn
           player.visible = true;
           playerMercyT = PLAYER_MERCY; // brief grace so you don't get shot the instant you respawn
@@ -1318,58 +1326,47 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       }
       const alive = playerDead <= 0;
 
-      const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-      // screen-right in this right-handed, +z-forward frame is -(up × fwd)
-      const right = new THREE.Vector3(-Math.cos(yaw), 0, Math.sin(yaw));
+      const fwd = tpCam.forward();
       const canMove = alive && playing;
-      // movement here is camera-relative: "up" drives forward, "right" strafes
+      // CharacterMover: movement is relative to the camera's planar forward
+      // (`SetForwardVector(lookPos.x, 0, lookPos.z)`): "up" drives forward, "right" strafes
       const mv = moveVector(keys);
-      const fi = canMove ? -mv.dy : 0;
-      const si = canMove ? mv.dx : 0;
-      // target velocity from input, then ease toward it (smooth start/stop)
-      let tx = fwd.x * fi + right.x * si;
-      let tz = fwd.z * fi + right.z * si;
-      const tl = Math.hypot(tx, tz);
-      if (tl > 0) {
-        tx = (tx / tl) * MOVE_SPEED;
-        tz = (tz / tl) * MOVE_SPEED;
-      }
-      hvel.x += (tx - hvel.x) * Math.min(1, dt * 22);
-      hvel.z += (tz - hvel.z) * Math.min(1, dt * 22);
-      const sxm = hvel.x * dt;
-      const szm = hvel.z * dt;
+      mover.setForward(fwd.x, fwd.z);
+      const jumpNow = jumpQueued && canMove;
+      jumpQueued = false;
+      mover.calculateVelocity({ axisX: canMove ? mv.dx : 0, axisY: canMove ? -mv.dy : 0, jump: jumpNow }, dt);
+      // horizontal, axis by axis: a wall stops that axis dead (the same probe the bots use)
+      const sxm = mover.vx * dt;
+      const szm = mover.vz * dt;
       if (!blockedMove(pos.x, pos.y, pos.z, sxm, 0)) pos.x += sxm;
-      else hvel.x = 0;
+      else mover.vx = 0;
       if (!blockedMove(pos.x, pos.y, pos.z, 0, szm)) pos.z += szm;
-      else hvel.z = 0;
+      else mover.vz = 0;
       pos.x = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, pos.x));
       pos.z = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, pos.z));
       // the character always faces where you're aiming (camera direction), and
       // strafes/backpedals — it does NOT spin toward its movement direction
-      let dRot = yaw - player.rotation.y;
+      let dRot = tpCam.yawRad - player.rotation.y;
       while (dRot > Math.PI) dRot -= Math.PI * 2;
       while (dRot < -Math.PI) dRot += Math.PI * 2;
       player.rotation.y += dRot * Math.min(1, dt * 18);
 
-      // vertical: gravity + smooth step-up + landing
+      // vertical: integrate the mover's vy, land on the highest walkable, smooth step-up
       const ground = groundAt(pos.x, pos.y, pos.z);
-      vel.y -= GRAV * dt;
-      let ny = pos.y + vel.y * dt;
+      let ny = pos.y + mover.vy * dt;
+      let landed = false;
       if (ny <= ground) {
         ny = ground;
-        vel.y = 0;
-        grounded = true;
+        landed = true;
       } else if (ground > pos.y && ground - pos.y <= STEP_UP) {
         ny = Math.min(ground, pos.y + 9 * dt); // climb steps smoothly instead of snapping
-        vel.y = 0;
-        grounded = true;
-      } else {
-        grounded = false;
+        landed = true;
       }
       pos.y = ny;
+      mover.finishMove(landed, false, dt); // grounded → vy = -g·dt and the jump count resets
       if (pos.y < -10) {
         pos.set(-12, 0, 0);
-        vel.set(0, 0, 0);
+        mover.reset();
       }
 
       player.position.copy(pos);
@@ -1377,33 +1374,16 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // aim, so strafing and backpedalling have to stride sideways/backwards
       // aim: 1 — you always have a gun in your hands, so the arms hold it rather
       // than swinging past it
-      animateChar(playerRig, Math.hypot(hvel.x, hvel.z), dt, { vx: hvel.x, vz: hvel.z, grounded, aim: 1 });
+      animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: mover.grounded, aim: 1 });
 
-      // third-person over-the-shoulder camera, tightening when aiming (ADS)
-      aimT += ((ads && alive ? 1 : 0) - aimT) * Math.min(1, dt * 12);
-      const camDist = 5.6 - aimT * 2.3;
-      const shoulder = 1.2 - aimT * 0.35;
-      const fov = 72 - aimT * 24;
-      if (Math.abs(camera.fov - fov) > 0.01) {
-        camera.fov = fov;
-        camera.updateProjectionMatrix();
-      }
-      // recoil kicks the view up briefly; muzzle flash fades
+      // ThirdPersonCamera: a tight over-the-shoulder orbit around the feet that pulls in
+      // as you tilt and slides in off cover. Recoil is a transient upward pitch kick.
       recoil = Math.max(0, recoil - dt * (0.4 + recoil * 5));
       muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 90);
       gun.position.z += (gunBaseZ - gun.position.z) * Math.min(1, dt * 14); // settle recoil kick
-      const vpitch = pitch + recoil;
-      // pull the camera in if a wall/loft is behind the player, so the view is never blocked
-      const head = new THREE.Vector3(pos.x + right.x * shoulder, pos.y + 2.2, pos.z + right.z * shoulder);
-      const desired = new THREE.Vector3(pos.x - fwd.x * camDist + right.x * shoulder, pos.y + 2.5 - vpitch * 2.5, pos.z - fwd.z * camDist + right.z * shoulder);
-      const toCam = desired.clone().sub(head);
-      const wantLen = toCam.length();
-      toCam.normalize();
-      camRay.set(head, toCam);
-      camRay.far = wantLen;
-      const chit = camRay.intersectObjects(camColliders, false)[0];
-      camera.position.copy(head).addScaledVector(toCam, chit ? Math.max(0.9, chit.distance - 0.3) : wantLen);
-      camera.lookAt(pos.x + fwd.x * 3 + right.x * shoulder, pos.y + 1.5 + vpitch * 4, pos.z + fwd.z * 3 + right.z * shoulder);
+      const pose = tpCam.update(pos, camProbe, dt, -recoil * THREE.MathUtils.RAD2DEG);
+      camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+      camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
 
       // shooting
       fireCool = Math.max(0, fireCool - dt);
@@ -1524,23 +1504,19 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const k = e.key.toLowerCase();
       keys.add(k);
       if (isGameKey(k)) e.preventDefault();
-      if (bound("action", k) && grounded && playerDead <= 0) vel.y = JUMP_V;
+      if (bound("action", k) && !e.repeat) jumpQueued = true;
     };
     const ku = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     const mv = (e: MouseEvent): void => {
       if (document.pointerLockElement !== canvas) return;
-      const sens = 0.0024 * (1 - aimT * 0.5); // slower, steadier aim when zoomed
-      yaw -= e.movementX * sens;
-      pitch = Math.max(-0.9, Math.min(0.9, pitch - e.movementY * (0.0022 * (1 - aimT * 0.5))));
+      tpCam.rotate(e.movementX, e.movementY); // 0.18°/px, pitch clamped to ±89°
     };
     const mdn = (e: MouseEvent): void => {
       if (document.pointerLockElement !== canvas) return;
       if (e.button === 0 && playerDead <= 0) firing = true;
-      if (e.button === 2) ads = true;
     };
     const mup = (e: MouseEvent): void => {
       if (e.button === 0) firing = false;
-      if (e.button === 2) ads = false;
     };
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     window.addEventListener("keydown", kd);
@@ -1619,7 +1595,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "rgba(20,12,6,0.82)", borderRadius: 8, textAlign: "center", padding: 24 }}>
             <div style={{ fontSize: 26, fontWeight: 900, color: "#ffe6bf" }}>Barn Brawl</div>
             <div style={{ fontSize: 15, opacity: 0.85, maxWidth: 460, lineHeight: 1.5 }}>
-              <strong>WASD</strong> move · <strong>mouse</strong> look · <strong>left-click</strong> fire · <strong>right-click</strong> aim · <strong>Space</strong> jump. Most kills in {MATCH_TIME} seconds wins. Grab weapons, take the high ground, aim for the head.
+              <strong>WASD</strong> move · <strong>mouse</strong> look · <strong>left-click</strong> fire · <strong>Space</strong> jump. Most kills in {MATCH_TIME} seconds wins. Grab weapons, take the high ground, aim for the head.
             </div>
             <button className="primary" style={{ fontSize: 18, padding: "10px 26px" }} onClick={() => beginRef.current?.()}>
               Start Brawl
