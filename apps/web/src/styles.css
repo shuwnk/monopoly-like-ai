@@ -181,3 +181,29 @@ kbd {
   50% { opacity: 1; }
 }
 .tile-pulse { animation: tile-pulse 1.7s ease-in-out infinite; }
+
+/* --- Barn Brawl round flow (MinigameController presentation) --------------- */
+/* the countdown number pops in (`CountDownTextSpawn`, 0.25 s) on every 3 · 2 · 1 */
+@keyframes bb-cd-in {
+  0% { transform: scale(2.4); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+.bb-cd { animation: bb-cd-in 0.25s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+
+/* results reveal: winner text and placements, each on its own `placement_delay` */
+@keyframes bb-reveal {
+  0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+  100% { opacity: 1; transform: none; }
+}
+.bb-reveal { animation: bb-reveal 0.3s cubic-bezier(0.2, 0.9, 0.25, 1) both; }
+
+/* a kill-feed line slides in from the right; its opacity is driven by the sim */
+@keyframes bb-feed-in {
+  0% { transform: translateX(24px); }
+  100% { transform: none; }
+}
+.bb-feed-line { animation: bb-feed-in 0.2s cubic-bezier(0.2, 0.9, 0.25, 1) both; white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-cd, .bb-reveal, .bb-feed-line { animation: none; }
+}

@@ -9,12 +9,15 @@ import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 import { BARN_BRAWL_MOVER, CharacterMover } from "../game/characterMover.js";
 import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type RaycastFn } from "../game/thirdPersonCamera.js";
+import { COUNTDOWN_LENGTH, countdownNumber, feedAlpha, makeFallers, placementDelay, resultsBrightness, ROUND_FLOW, stepFallers, timerPulseScale, type Faller } from "../game/roundFlow.js";
 
 // "Barn Brawl" — a port of Pummel Party's Barn Brawl: a one-shot shotgun scramble in a
 // two-level barn. Everyone spawns unarmed; shotguns appear around the barn; picking one
 // up gives you exactly one shot; the shot sprays 3–5 pellets and any pellet kills; the gun
 // flies out of your hands when you fire. 50 points a kill, most points after 75 s wins.
-// Movement and camera are the ported CharacterMover / ThirdPersonCamera.
+// Movement and camera are the ported CharacterMover / ThirdPersonCamera; the round
+// presentation (spawn drop, countdown, timer pulse, kill feed, results) follows
+// MinigameController through the shared roundFlow helpers.
 //
 // Sources: ~/Projects/rea-work/pummel-party/decompiled/Assembly-CSharp/BarnBrawlPlayer.cs,
 // BarnBrawlController.cs and extracted/minigames/barnbrawl.json. Numbers are cited inline;
@@ -22,7 +25,6 @@ import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type RaycastFn } from
 // WASD move · mouse look · click fire · Space jump · click the view to capture the mouse.
 
 const STEP_UP = 0.55; // stair rise climbed without a jump (the CharacterController's stepOffset)
-const COUNTDOWN = 3;
 const ROUND_LENGTH = 75; // BarnBrawlController.roundLength 75
 const KILL_SCORE = 50; // ApplyDamage: `player.Score += 50`
 const DEATH_TIME = 4; // `deathTimer = new ActionTimer(4f)`
@@ -60,6 +62,8 @@ const BOT_TURN = 550; // `RotateTowards(…, 550f * dt)`
 const BOT_RETREAT = 9; // `num6 = 9f`, how far the escape probes reach
 const PLAYER_ID = -1;
 const DEG = Math.PI / 180;
+
+type Phase = "ready" | "spawning" | "countdown" | "playing" | "results";
 
 interface ScoreRow {
   name: string;
@@ -105,7 +109,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
   const weaponRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<HTMLDivElement | null>(null);
   const cdRef = useRef<HTMLDivElement | null>(null);
-  const [phase, setPhase] = useState<"ready" | "countdown" | "playing" | "results">("ready");
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const [phase, setPhase] = useState<Phase>("ready");
   const [results, setResults] = useState<ScoreRow[] | null>(null);
   const beginRef = useRef<(() => void) | null>(null); // lets the button start/restart the match inside the effect
   const partyResultRef = useRef<MinigameResult | null>(null); // ranking handed back when the board round ends
@@ -419,6 +424,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       alive: boolean;
       deathT: number; // respawn countdown while dead
       deathPop: number; // >0 while playing the death scale-pop before hiding
+      dropping: boolean; // still falling in on the spawn drop
       pos: THREE.Vector3;
       home: THREE.Vector3;
       mover: CharacterMover;
@@ -467,7 +473,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const egun = makeShotgun();
       c.upper.add(egun);
       const e: Enemy = {
-        root, mat: c.tint as THREE.MeshStandardMaterial, rig: c, gun: egun, alive: true, deathT: 0, deathPop: 0,
+        root, mat: c.tint as THREE.MeshStandardMaterial, rig: c, gun: egun, alive: true, deathT: 0, deathPop: 0, dropping: false,
         pos: new THREE.Vector3(x, y, z), home: new THREE.Vector3(x, y, z), mover: new CharacterMover(BARN_BRAWL_MOVER),
         name, av, id: enemies.length, difficulty, score: 0, kills: 0, deaths: 0, holding: false,
         targetPickup: null, targetId: -2, lookAt: new THREE.Vector3(), canSee: false, moveAway: new THREE.Vector3(x, y, z), randomMove: { x: 0, z: 0 },
@@ -634,19 +640,45 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     function fighterName(id: number): string {
       return id === PLAYER_ID ? "You" : enemies[id]!.name;
     }
+    function fighterColor(id: number): string {
+      return id === PLAYER_ID ? roster[0]!.body : enemies[id]!.av.body;
+    }
+    // `AddKillFeed`: "<killer> ▸ <victim>" in the fighters' colours at alpha 200, stacked
+    // top-right; each line lives 5 s and fades over its last second (BarnBrawlKillFeedText)
+    const feed: Array<{ el: HTMLDivElement; t: number }> = [];
+    function addKillFeed(killer: number, victim: number): void {
+      const host = feedRef.current;
+      if (!host) return;
+      const el = document.createElement("div");
+      el.className = "bb-feed-line";
+      el.style.opacity = feedAlpha(ROUND_FLOW.feedLife).toFixed(3);
+      const k = document.createElement("span");
+      k.textContent = fighterName(killer);
+      k.style.color = fighterColor(killer);
+      const arrow = document.createElement("span");
+      arrow.textContent = " ▸ ";
+      arrow.style.color = "#fff";
+      const v = document.createElement("span");
+      v.textContent = fighterName(victim);
+      v.style.color = fighterColor(victim);
+      el.append(k, arrow, v);
+      host.append(el);
+      feed.push({ el, t: ROUND_FLOW.feedLife });
+    }
     function randomUnit(): THREE.Vector3 {
       const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5);
       return v.lengthSq() < 1e-6 ? v.set(1, 0, 0) : v.normalize();
     }
 
     // ── kills: `ApplyDamage` → `KillPlayer`; 1 pellet, 1 health ──
-    function creditKill(by: number, victim: string): void {
+    function creditKill(by: number, victim: number): void {
+      addKillFeed(by, victim);
       if (by === PLAYER_ID) {
         score += KILL_SCORE;
         kills++;
         announcer.onKill(false);
         killedT = 1.3;
-        if (killedRef.current) killedRef.current.textContent = `Killed ${victim}`;
+        if (killedRef.current) killedRef.current.textContent = `Killed ${fighterName(victim)}`;
       } else {
         const k = enemies[by]!;
         k.score += KILL_SCORE;
@@ -664,7 +696,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       e.mover.reset();
       burst(e.pos.x, e.pos.y + 1.2, e.pos.z, e.mat.color, 16, 3.4, 0.34, 6); // confetti-blood
       blip(180, 0.3, "sawtooth", 0.2, 55);
-      creditKill(by, e.name);
+      creditKill(by, e.id);
     }
     function killPlayer(by: number): void {
       if (playerDead > 0) return;
@@ -679,7 +711,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       player.visible = false; // the ragdoll stands in for the hidden body
       burst(pos.x, pos.y + 1.2, pos.z, roster[0]!.body, 16, 3.4, 0.34, 6);
       blip(150, 0.4, "sawtooth", 0.22, 48);
-      creditKill(by, "You");
+      creditKill(by, PLAYER_ID);
     }
 
     // ── the shot (`DoShotgunShot`): 3–5 pellets in a ±10° cone from a jittered muzzle, each a
@@ -1207,10 +1239,20 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       e.directForceT = 0;
     }
 
-    // ── match state machine (ready → countdown → playing → results) ──
-    let mode: "ready" | "countdown" | "playing" | "results" = "ready";
+    // ── match state machine (ready → spawning → countdown → playing → results), the
+    // MinigameController states EnablePlayers → Countdown → Playing → ShowScoreScreen ──
+    let mode: Phase = "ready";
+    let fallers: Faller[] = []; // the spawn drop: [player, ...bots]
+    let playerDropping = false;
+    let spawnClock = 0;
+    let spawnLandedAt = -1; // drop-clock time the last fighter touched down
     let cdT = 0; // countdown remaining
+    let cdShown = -1; // the number on screen
     let mtime = 0; // round time remaining
+    let timerSec = -1; // the second on the timer, for the pulse
+    let timerTick = Infinity; // sim-clock time the timer last changed
+    let resultsT = 0; // seconds into the results dim
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
     function beginMatch(): void {
       score = 0;
@@ -1272,11 +1314,36 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       canvas.style.filter = "";
       satW = 0;
       announcer.reset();
-      cdT = COUNTDOWN;
+      for (const f of feed) f.el.remove();
+      feed.length = 0;
+      // `DoSpawnPlayersAnimation`: everyone starts 10 units above their spot and drops in,
+      // the player first, then a bot every 0.1 s (placed straight down under reduced motion)
+      fallers = makeFallers([SPAWNS[0]!.y, ...enemies.map((e) => e.home.y)]);
+      if (reduceMotion) {
+        for (const f of fallers) {
+          f.y = f.targetY;
+          f.landed = true;
+        }
+      }
+      pos.y = fallers[0]!.y;
+      playerDropping = !fallers[0]!.landed;
+      enemies.forEach((e, i) => {
+        const f = fallers[i + 1]!;
+        e.dropping = !f.landed;
+        e.pos.y = f.y;
+        e.root.position.copy(e.pos);
+        if (f.landed) e.mover.finishMove(true, false, 0);
+      });
+      spawnClock = 0;
+      spawnLandedAt = -1;
+      timerSec = -1;
+      timerTick = Infinity;
+      resultsT = 0;
       mtime = ROUND_LENGTH;
-      mode = "countdown";
+      mode = "spawning";
       setResults(null);
-      setPhase("countdown");
+      setPhase("spawning");
+      void ac.resume(); // started from a click, so the ticks and the shots can play
       try {
         const r = canvas.requestPointerLock() as unknown;
         if (r instanceof Promise) r.catch(() => undefined);
@@ -1304,8 +1371,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       } else {
         useProfile.getState().award(20 + kills * 4 + Math.max(0, board.length - place) * 6); // everyone earns something
       }
-      canvas.style.filter = "";
-      satW = 0;
+      resultsT = 0;
       setResults(board);
       setPhase("results");
       if (document.pointerLockElement) document.exitPointerLock();
@@ -1325,11 +1391,74 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       last = now;
       clock += dt;
 
-      // advance the match clock
-      if (mode === "countdown") {
+      // ── kill feed: each line lives 5 s and fades over its last second ──
+      for (let i = feed.length - 1; i >= 0; i--) {
+        const f = feed[i]!;
+        f.t -= dt;
+        if (f.t <= 0) {
+          f.el.remove();
+          feed.splice(i, 1);
+        } else if (f.t < ROUND_FLOW.feedFade) f.el.style.opacity = feedAlpha(f.t).toFixed(3);
+      }
+
+      // ── results: the last frame stays up (the reference screenshots it) and dims to
+      // 35 % over 0.5 s; the overlay then reveals itself on CSS delays ──
+      if (mode === "results") {
+        resultsT += dt;
+        canvas.style.filter = `${satW > 0.005 ? `grayscale(${satW.toFixed(2)}) ` : ""}brightness(${resultsBrightness(resultsT).toFixed(3)})`;
+        renderer.render(scene, camera);
+        raf = requestAnimationFrame(frame);
+        return;
+      }
+
+      // ── advance the match clock ──
+      if (mode === "spawning") {
+        // the drop: released one by one, free-falling at 9.8 u/s² onto the spot (the
+        // reference flips its animator to Grounded 1.5 units early; our rig keys the
+        // landing compression off the touchdown itself); 1.4 s after the last landing
+        // plus 0.5 s, the countdown starts
+        spawnClock += dt;
+        for (const f of stepFallers(fallers, spawnClock, dt)) {
+          const i = fallers.indexOf(f);
+          const e = i === 0 ? null : enemies[i - 1]!;
+          const m = e ? e.mover : mover;
+          m.reset();
+          m.finishMove(true, false, dt); // grounded → the rig plays its landing compression
+          if (e) e.dropping = false;
+          else playerDropping = false;
+          const p = e ? e.pos : pos;
+          burst(p.x, p.y + 0.05, p.z, "#c9a66b", 8, 1.4, 0.3, 2); // a puff of barn dust
+          blip(120, 0.1, "triangle", 0.1, 50);
+        }
+        pos.y = fallers[0]!.y;
+        enemies.forEach((e, i) => {
+          e.pos.y = fallers[i + 1]!.y;
+          e.root.position.copy(e.pos);
+        });
+        if (spawnLandedAt < 0 && fallers.every((f) => f.landed)) spawnLandedAt = spawnClock;
+        if (spawnLandedAt >= 0 && spawnClock - spawnLandedAt >= ROUND_FLOW.spawnSettle) {
+          cdT = COUNTDOWN_LENGTH;
+          cdShown = -1;
+          mode = "countdown";
+          setPhase("countdown");
+        }
+      } else if (mode === "countdown") {
+        // `3`, `2`, `1` for 0.5 s each with a tick on every number; no "GO", straight into play
         cdT -= dt;
-        if (cdRef.current) cdRef.current.textContent = cdT > 0 ? String(Math.ceil(cdT)) : "BRAWL!";
-        if (cdT <= -0.6) {
+        const n = countdownNumber(cdT);
+        if (n !== cdShown) {
+          cdShown = n;
+          if (n > 0) {
+            blip(1320, 0.07, "square", 0.16); // `CountdownTick01` at 0.5
+            if (cdRef.current) {
+              cdRef.current.textContent = String(n);
+              cdRef.current.style.animation = "none"; // restart the pop-in (`CountDownTextSpawn`)
+              void cdRef.current.offsetWidth;
+              cdRef.current.style.animation = "";
+            }
+          }
+        }
+        if (cdT <= 0) {
           mode = "playing";
           setPhase("playing");
         }
@@ -1338,7 +1467,13 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         if (mtime <= 0) finishMatch();
         else if (timerRef.current) {
           const s = Math.max(0, Math.ceil(mtime));
-          timerRef.current.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+          if (s !== timerSec) {
+            timerSec = s;
+            timerTick = clock; // the number pulses ×1.25 over 0.125 s and back
+            timerRef.current.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+          }
+          const k = reduceMotion ? 1 : timerPulseScale(clock - timerTick);
+          timerRef.current.style.transform = k === 1 ? "" : `scale(${k.toFixed(3)})`;
           timerRef.current.style.color = mtime <= 10 ? (Math.floor(mtime * 3) % 2 === 0 ? "#ff4d4d" : "#fff") : "#fff";
         }
       }
@@ -1374,8 +1509,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       mover.setForward(fwd.x, fwd.z);
       const jumpNow = jumpQueued && canMove;
       jumpQueued = false;
-      mover.calculateVelocity({ axisX: canMove ? mv.dx : 0, axisY: canMove ? -mv.dy : 0, jump: jumpNow }, dt);
-      stepBody(pos, mover, dt);
+      if (!playerDropping) {
+        mover.calculateVelocity({ axisX: canMove ? mv.dx : 0, axisY: canMove ? -mv.dy : 0, jump: jumpNow }, dt);
+        stepBody(pos, mover, dt);
+      }
       if (pos.y < -10) {
         pos.set(-12, 0, 0);
         mover.reset();
@@ -1388,7 +1525,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       player.rotation.y += dRot * Math.min(1, dt * 18);
       player.position.copy(pos);
       // `ShotgunStrength`: the arms come up onto the gun only while holding one
-      animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: mover.grounded, aim: holding ? 1 : 0 });
+      animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: !playerDropping && mover.grounded, aim: holding ? 1 : 0 });
 
       // ── camera ──
       recoil = Math.max(0, recoil - dt * (0.4 + recoil * 5));
@@ -1507,7 +1644,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
           continue;
         }
         if (playing) botAI(e, dt);
-        animateChar(e.rig, Math.hypot(e.mover.vx, e.mover.vz), dt, { vx: e.mover.vx, vz: e.mover.vz, grounded: e.mover.grounded, aim: e.holding ? 1 : 0 });
+        animateChar(e.rig, Math.hypot(e.mover.vx, e.mover.vz), dt, { vx: e.mover.vx, vz: e.mover.vz, grounded: !e.dropping && e.mover.grounded, aim: e.holding ? 1 : 0 });
       }
 
       // ── pickups: float/spin; grabbed by whoever is unarmed and walks over (`OnTrigger`) ──
@@ -1606,7 +1743,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     };
   }, []);
 
-  const inMatch = phase === "playing" || phase === "countdown";
+  const inMatch = phase === "playing" || phase === "countdown" || phase === "spawning";
 
   return (
     <main style={{ minHeight: "100vh", padding: 16, maxWidth: 1040, margin: "0 auto" }}>
@@ -1637,7 +1774,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
                 <div ref={killedRef} style={{ marginTop: 10, whiteSpace: "nowrap", opacity: 0, color: "#ffd23f", fontWeight: 900, fontSize: 20, textShadow: "0 1px 4px #000" }} />
               </div>
             </div>
-            <div ref={timerRef} style={{ position: "absolute", top: 10, left: 0, right: 0, textAlign: "center", color: "#fff", fontWeight: 900, fontSize: 26, textShadow: "0 1px 4px #000", pointerEvents: "none" }}>1:15</div>
+            <div ref={timerRef} style={{ position: "absolute", top: 10, left: 0, right: 0, textAlign: "center", color: "#fff", fontWeight: 900, fontSize: 26, textShadow: "0 1px 4px #000", pointerEvents: "none", transformOrigin: "50% 50%" }}>1:15</div>
+            {/* the kill feed (`AddKillFeed`): lines appended by the sim, top-right */}
+            <div ref={feedRef} style={{ position: "absolute", top: 12, right: 16, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, fontWeight: 800, fontSize: 15, textShadow: "0 1px 3px #000", pointerEvents: "none" }} />
             <div ref={scoreRef} style={{ position: "absolute", top: 12, left: 16, color: "#fff", fontWeight: 800, fontSize: 16, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Score 0 · Kills 0</div>
             <div ref={weaponRef} style={{ position: "absolute", right: 16, bottom: 16, color: "#fff", fontWeight: 800, fontSize: 17, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Unarmed · find a shotgun</div>
             <div ref={deadRef} style={{ position: "absolute", inset: 0, display: "none", placeItems: "center", background: "rgba(40,10,10,0.45)", borderRadius: 8, color: "#fff", pointerEvents: "none", textAlign: "center" }}>
@@ -1651,7 +1790,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
 
         {phase === "countdown" && (
           <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
-            <div ref={cdRef} style={{ fontSize: 92, fontWeight: 900, color: "#ffe6bf", textShadow: "0 3px 18px #000", letterSpacing: 2 }}>3</div>
+            {/* `UICountDownText`: 3 · 2 · 1, 0.5 s each, popping in; no "GO" */}
+            <div ref={cdRef} className="bb-cd" style={{ fontSize: 112, fontWeight: 900, color: "#ffe6bf", textShadow: "0 3px 18px #000", letterSpacing: 2 }}>3</div>
           </div>
         )}
 
@@ -1668,28 +1808,33 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         )}
 
         {phase === "results" && results && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, background: "rgba(18,11,5,0.9)", borderRadius: 8, textAlign: "center", padding: 20 }}>
-            <div style={{ fontSize: 14, letterSpacing: 3, textTransform: "uppercase", color: "var(--muted)" }}>Round Over</div>
-            <div style={{ fontSize: 26, fontWeight: 900, color: results[0]!.isYou ? "#4ade80" : "#ffd23f" }}>
-              {results[0]!.isYou ? "You win!" : `${results[0]!.name} wins`}
+          // `UIMinigameResultScreen` over the dimmed last frame: 1 s of nothing, then
+          // "<Name> wins!" with the winner's row, then one placement every 0.25 s
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 8, textAlign: "center", padding: 20, pointerEvents: "none" }}>
+            <div className="bb-reveal" style={{ animationDelay: `${placementDelay(0)}s`, fontSize: 14, letterSpacing: 3, textTransform: "uppercase", color: "#e9dcc8", textShadow: "0 1px 4px #000" }}>Round Over</div>
+            <div className="bb-reveal" style={{ animationDelay: `${placementDelay(0)}s`, fontSize: 32, fontWeight: 900, color: results[0]!.color, textShadow: "0 2px 12px #000, 0 0 2px #000" }}>
+              {results[0]!.isYou ? "You win!" : `${results[0]!.name} wins!`}
             </div>
             <div style={{ width: "100%", maxWidth: 380, display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
               {results.map((r, i) => (
                 <div
                   key={r.name}
+                  className="bb-reveal"
                   style={{
+                    animationDelay: `${placementDelay(i)}s`,
                     display: "grid",
                     gridTemplateColumns: "24px 18px 1fr auto auto",
                     alignItems: "center",
                     gap: 8,
                     padding: "6px 10px",
                     borderRadius: 6,
-                    background: r.isYou ? "rgba(255,226,140,0.16)" : "rgba(255,255,255,0.05)",
-                    border: i === 0 ? "1px solid #ffd23f" : "1px solid transparent",
+                    color: "#fff",
+                    background: r.isYou ? "rgba(96,72,20,0.88)" : "rgba(20,12,6,0.82)",
+                    border: i === 0 ? "1px solid #ffd23f" : "1px solid rgba(255,255,255,0.08)",
                     fontWeight: r.isYou ? 800 : 600,
                   }}
                 >
-                  <span style={{ color: "var(--muted)" }}>#{i + 1}</span>
+                  <span style={{ opacity: 0.7 }}>#{i + 1}</span>
                   <span style={{ width: 14, height: 14, borderRadius: "50%", background: r.color, justifySelf: "center" }} />
                   <span style={{ textAlign: "left" }}>{r.name}</span>
                   <span style={{ color: "#ffd23f" }}>{r.score} pts</span>
@@ -1697,7 +1842,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
                 </div>
               ))}
             </div>
-            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+            <div className="bb-reveal" style={{ animationDelay: `${placementDelay(results.length)}s`, display: "flex", gap: 10, marginTop: 8, pointerEvents: "auto" }}>
               {party ? (
                 <button className="primary" style={{ fontSize: 16, padding: "9px 22px" }} onClick={() => party.onResult(partyResultRef.current!)}>
                   Continue →
