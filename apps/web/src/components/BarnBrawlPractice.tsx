@@ -176,7 +176,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
 
     // faked god-ray light shafts
     const shaftMat = new THREE.MeshBasicMaterial({ color: "#ffdca0", transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    for (const [sx, sz, ry] of [[-13, -7, 0.5], [-6, 8, 2.1], [5, -12, 1.2], [12, 3, 0.3], [-2, 15, 2.7]] as const) {
+    for (const [sx, sz, ry] of [[0, -14, 0.5], [-2, 11, 2.1], [-14, 1, 1.2], [13, -2, 0.3], [1, 22, 2.7]] as const) {
       const shaft = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 12), shaftMat);
       shaft.position.set(sx, 4.5, sz);
       shaft.rotation.set(0.22, ry, 0.22);
@@ -192,85 +192,167 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
 
     const walkables: THREE.Mesh[] = []; // surfaces you can stand on (ground raycast)
     const blockers: THREE.Mesh[] = []; // things that stop horizontal movement
-    const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, kind: "walk" | "block" | "both" | "deco"): THREE.Mesh => {
+    const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number, kind: "walk" | "block" | "both" | "deco", parent: THREE.Object3D = scene): THREE.Mesh => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
       m.position.set(x, y + h / 2, z);
       m.castShadow = kind !== "walk" && kind !== "deco";
       m.receiveShadow = true;
-      scene.add(m);
+      parent.add(m);
       if (kind === "walk" || kind === "both") walkables.push(m);
       if (kind === "block" || kind === "both") blockers.push(m);
       return m;
     };
 
-    const HALF = 28; // arena half-size (56 × 56)
-    const ARENA = HALF * 2;
-    const MZ = 4.8; // loft top height
+    // ── the real Barn Brawl layout ──
+    // Collider AABBs dumped from the scene bundle (scenes_scenes_barnbrawl_scene.bundle):
+    // a plus-shaped barn. Four wings 14.6 wide (|u| ≤ 7.3) run from a 14.6 × 14.6 crossing
+    // out to a door at v = 27.4; a loft ring at y 5.9–6.3 (two 4.9-wide strips per wing plus
+    // a ring over the crossing with a hole in it); one ramp per wing (u 4.7..7.2, ground at
+    // v 17.2 up to loft level at v 9.4); hay bales and chicken coops at the far end of each
+    // wing; four hay walls and a hay stack in the crossing, with the ground shotguns on top
+    // of them. Wing 0 points +z, then every 90° clockwise (+x, −z, −x). (u, v) are
+    // wing-local: u across, v outward from the centre; each wing is a rotated Group so the
+    // numbers below are the extracted ones.
+    const HALF = 28; // the floor collider: two crossed 56 × 14.6 strips
+    const WING_W = 7.3; // half-width of a wing / of the crossing
+    const DOOR_V = 27.4; // the door collider's inner face
+    const MZ = 6.3; // loft floor top (RoofFloor y 5.9..6.3)
+    const WALL_H = 9; // wall top; the roof gables sit above
+    const RAMP_LO = 17.2; // ramp foot (ground)
+    const RAMP_HI = 9.4; // ramp head (loft)
+    const RAMP_U = 5.95; // ramp centre line (u 4.7..7.2)
+    const wingYaw = (k: number): number => (k * Math.PI) / 2;
+    // wing-local (u, v) → world (x, z)
+    const wingXZ = (k: number, u: number, v: number): { x: number; z: number } => {
+      const c = Math.cos(wingYaw(k));
+      const s = Math.sin(wingYaw(k));
+      return { x: u * c + v * s, z: -u * s + v * c };
+    };
 
-    // floor
-    box(ARENA, 0.5, ARENA, floorMat, 0, -0.5, 0, "walk");
-    // outer walls (roof open so the sun spills in)
-    box(ARENA, 11, 0.6, wallMat, 0, 0, -HALF, "block");
-    box(ARENA, 11, 0.6, wallMat, 0, 0, HALF, "block");
-    box(0.6, 11, ARENA, wallMat, -HALF, 0, 0, "block");
-    box(0.6, 11, ARENA, wallMat, HALF, 0, 0, "block");
-    // roof beams
-    for (let x = -24; x <= 24; x += 6) box(1, 0.8, ARENA, darkWood, x, 10, 0, "deco").castShadow = true;
-    for (let z = -24; z <= 24; z += 8) box(ARENA, 0.6, 0.8, darkWood, 0, 10.4, z, "deco");
-    // ground pillars (clear of the open centre)
-    for (const px of [-20, -13, 13, 20]) for (const pz of [-18, -6, 6, 18]) box(0.7, 10, 0.7, wood, px, 0, pz, "block");
-
-    // ── barn-plank styling: wall battens, floor seams, glowing windows ──
-    for (let i = -HALF + 3; i < HALF; i += 3.4) {
-      box(0.24, 11, 0.14, darkWood, i, 0, -HALF + 0.4, "deco");
-      box(0.24, 11, 0.14, darkWood, i, 0, HALF - 0.4, "deco");
-      box(0.14, 11, 0.24, darkWood, -HALF + 0.4, 0, i, "deco");
-      box(0.14, 11, 0.24, darkWood, HALF - 0.4, 0, i, "deco");
+    // floor: two crossed strips
+    box(HALF * 2, 0.5, WING_W * 2, floorMat, 0, -0.5, 0, "walk");
+    box(WING_W * 2, 0.5, HALF * 2, floorMat, 0, -0.5, 0, "walk");
+    // the four corner blocks between the wings double as the wing walls
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(27, WALL_H, 27, wallMat, sx * (WING_W + 13.5), 0, sz * (WING_W + 13.5), "block");
+    // floor seams
+    for (let v = -HALF + 2; v < HALF; v += 2.4) {
+      box(WING_W * 2, 0.02, 0.1, darkWood, 0, 0.02, v, "deco");
+      box(0.1, 0.02, WING_W * 2, darkWood, v, 0.02, 0, "deco");
     }
-    for (let z = -HALF + 2; z < HALF; z += 2.4) box(ARENA, 0.02, 0.1, darkWood, 0, 0.02, z, "deco");
+
+    // ── crossing: loft ring with a hole, hay walls, centre stack ──
+    // RoofCenterFloor: side strips x ±(2.7..7.4) full depth, front/back strips z ±(3.3..7.4)
+    for (const s of [-1, 1]) {
+      box(4.7, 0.4, 14.8, wood, s * 5.05, MZ - 0.4, 0, "walk");
+      box(5.4, 0.4, 4.1, wood, 0, MZ - 0.4, s * 5.35, "walk");
+      // hole rails (deco: you can hop them like the 0.4 collider in the reference)
+      box(0.1, 0.5, 6.6, darkWood, s * 2.75, MZ, 0, "deco");
+      box(5.6, 0.5, 0.1, darkWood, 0, MZ, s * 3.35, "deco");
+    }
+    // HayWall ×4: two bales side by side with one on top; the shotguns spawn on top. The
+    // reference stacks reach 1.7 with a 1.67 jump (10²/2·30) — ours stop at 1.6 so the hop
+    // isn't a pixel-perfect affair
+    function hayWall(cx: number, cz: number, alongZ: boolean): void {
+      const [w, d] = alongZ ? [1.8, 2.5] : [2.5, 1.8];
+      const [ox, oz] = alongZ ? [0, 1.25] : [1.25, 0];
+      box(w, 0.85, d, hay, cx - ox, 0, cz - oz, "both");
+      box(w, 0.85, d, hay, cx + ox, 0, cz + oz, "both");
+      box(alongZ ? 1.7 : 2.3, 0.75, alongZ ? 2.3 : 1.7, hay, cx, 0.85, cz, "both");
+    }
+    hayWall(5.1, 0, true); // x 4.2..6.0, z −2.5..2.5
+    hayWall(-5.1, 0, true);
+    hayWall(0, 5.1, false); // z 4.2..6.0, x −2.5..2.5
+    hayWall(0, -5.1, false);
+    // centre hay stack (CenterHayBaleSpawn sits on it at y 2.06)
+    box(2, 0.85, 2, hay, 0, 0, 0, "both");
+    box(1.8, 0.75, 1.8, hay, 0.1, 0.85, -0.1, "both");
+    // crossing roof: a dark lid high above the loft ring, beams underneath
+    box(WING_W * 2 + 0.6, 0.3, WING_W * 2 + 0.6, darkWood, 0, 13.4, 0, "deco");
+    box(WING_W * 2, 0.35, 0.35, darkWood, 0, 12.5, 0, "deco");
+    box(0.35, 0.35, WING_W * 2, darkWood, 0, 12.5, 0, "deco");
     const winMat = new THREE.MeshBasicMaterial({ color: "#ffe6ac" });
-    for (const [wx, wz, ry] of [[-HALF + 0.35, -14, Math.PI / 2], [-HALF + 0.35, 9, Math.PI / 2], [HALF - 0.35, 13, Math.PI / 2], [HALF - 0.35, -7, Math.PI / 2], [-16, HALF - 0.35, 0], [10, HALF - 0.35, 0], [-8, -HALF + 0.35, 0], [15, -HALF + 0.35, 0]] as const) {
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.4), winMat);
-      win.position.set(wx, 6.8, wz);
-      win.rotation.y = ry;
-      scene.add(win);
-    }
 
-    // ── two side lofts (left x[-28,-8], right x[8,28]) over an open central pit ──
-    box(20, 0.5, ARENA, wood, -18, MZ - 0.5, 0, "walk");
-    box(20, 0.5, ARENA, wood, 18, MZ - 0.5, 0, "walk");
-    for (const pz of [-20, -10, 0, 10, 20]) {
-      box(0.5, MZ, 0.5, wood, -9.5, 0, pz, "block");
-      box(0.5, MZ, 0.5, wood, 9.5, 0, pz, "block");
-    }
-    // decorative railings along the open inner edges (you can still drop off)
-    box(0.35, 0.75, ARENA, darkWood, -8.2, MZ, 0, "deco");
-    box(0.35, 0.75, ARENA, darkWood, 8.2, MZ, 0, "deco");
-
-    // ── two staircases at opposite ends, up to each loft ──
-    // Each step is a SOLID block (kind "both") from the ground up to its tread height:
-    // walkable on top, but a real wall on the sides so you can't clip through or slip off.
-    // Steps overlap slightly along the climb so there are no gaps, and rise 0.4 < STEP_UP.
-    function stairs(x0: number, z: number, dir: number): void {
-      const n = 12;
-      const run = 0.66; // tread depth (along the climb, X)
-      const W = 4.8; // width across the climb (Z) — wide enough not to fall off
-      for (let i = 0; i < n; i++) box(run + 0.5, ((i + 1) * MZ) / n, W, wood, x0 + dir * (i * run + 0.33), 0, z, "both");
-      const slope = -dir * Math.atan2(MZ, run * n);
-      const midX = x0 + dir * (run * n * 0.5);
-      const topX = x0 + dir * (run * n + 0.2);
-      for (const s of [-1, 1]) {
-        const rz = z + s * (W / 2 + 0.11);
-        // angled stringer + a handrail above it + newel posts at the ends (visual only, thin
-        // so they never block the camera)
-        box(run * n + 1.2, 0.5, 0.22, darkWood, midX, MZ * 0.5 - 0.25, rz, "deco").rotation.z = slope;
-        box(run * n + 1.2, 0.14, 0.14, wood, midX, MZ * 0.5 + 0.6, rz, "deco").rotation.z = slope;
-        box(0.18, 1.2, 0.18, darkWood, x0 + dir * 0.2, 0, rz, "deco");
-        box(0.18, MZ + 0.9, 0.18, darkWood, topX, 0, rz, "deco");
+    // ── one wing (local coordinates, rotated into place) ──
+    for (let k = 0; k < 4; k++) {
+      const g = new THREE.Group();
+      g.rotation.y = wingYaw(k);
+      scene.add(g);
+      const b = (w: number, h: number, d: number, mat: THREE.Material, u: number, y: number, v: number, kind: "walk" | "block" | "both" | "deco"): THREE.Mesh => box(w, h, d, mat, u, y, v, kind, g);
+      // door wall (BarnDoorCollider at v 27.4) with a glowing crack of a door
+      b(WING_W * 2 + 1, WALL_H + 4.5, 1, wallMat, 0, 0, DOOR_V + 0.5, "block");
+      const door = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5.2), winMat);
+      door.position.set(0, 2.6, DOOR_V - 0.02);
+      door.rotation.y = Math.PI;
+      g.add(door);
+      // wall battens + windows on both side walls (the corner blocks are the walls)
+      for (let v = 9; v < DOOR_V; v += 3.4) for (const s of [-1, 1]) b(0.14, WALL_H, 0.24, darkWood, s * (WING_W - 0.07), 0, v, "deco");
+      for (const v of [13, 23]) for (const s of [-1, 1]) {
+        const win = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4), winMat);
+        win.position.set(s * (WING_W - 0.3), 8.6, v);
+        win.rotation.y = s > 0 ? -Math.PI / 2 : Math.PI / 2;
+        g.add(win);
       }
+      // gabled roof: two slabs from the wall tops to a ridge at y 13.5 (deco), tie beams
+      const slabL = Math.hypot(WING_W, 4.5);
+      const pitch = Math.atan2(4.5, WING_W);
+      for (const s of [-1, 1]) {
+        const slab = b(slabL, 0.25, DOOR_V - WING_W + 1.2, darkWood, s * (WING_W / 2), WALL_H + 2.25, (DOOR_V + WING_W) / 2, "deco");
+        slab.rotation.z = s * pitch;
+      }
+      for (const v of [8, 13, 18, 23]) b(WING_W * 2, 0.35, 0.35, darkWood, 0, WALL_H, v, "deco");
+
+      // loft strips (RoofFloor): left strip full length; right strip is cut by the ramp
+      b(4.9, 0.4, 20.3, wood, -4.85, MZ - 0.4, 17.35, "walk"); // u −7.3..−2.4, v 7.2..27.5
+      b(4.9, 0.4, 3.0, wood, 4.85, MZ - 0.4, 8.4, "walk"); // u 2.4..7.3, v 6.9..9.9 (ramp head)
+      b(1.9, 0.4, 4.1, wood, 3.35, MZ - 0.4, 11.95, "walk"); // u 2.4..4.3, v 9.9..14 (beside the ramp)
+      b(4.9, 0.4, 13.5, wood, 4.85, MZ - 0.4, 20.75, "walk"); // u 2.4..7.3, v 14..27.5
+      // inner-edge rails (deco, like the 0.4-high collider: you can hop off the loft)
+      for (const s of [-1, 1]) {
+        b(0.1, 0.45, 20, darkWood, s * 2.5, MZ, 17.6, "deco");
+        for (const v of [8.2, 12.6, 17, 21.4, 25.8]) b(0.16, 0.9, 0.16, darkWood, s * 2.5, MZ, v, "deco");
+      }
+      // ramp (Stairs/Ramp): u 4.7..7.2, from the ground at v 17.2 up to the loft at v 9.4
+      const run = RAMP_LO - RAMP_HI;
+      const rampL = Math.hypot(run, MZ);
+      const ramp = b(2.5, 0.3, rampL, wood, RAMP_U, MZ / 2 - 0.15, (RAMP_LO + RAMP_HI) / 2, "walk");
+      ramp.rotation.x = -Math.atan2(MZ, run);
+      // the fill beneath it (Blocker1–3) so nobody walks under or through it: each step is
+      // as tall as the ramp's underside at the step's LOWER end, so it never pokes through
+      // the surface in front of someone walking up
+      const STEPS = 8;
+      for (let i = 0; i < STEPS; i++) {
+        const vLow = RAMP_HI + (run * (i + 1)) / STEPS;
+        const h = (MZ * (RAMP_LO - vLow)) / run - 0.3;
+        if (h > 0.1) b(2.5, h, run / STEPS, wood, RAMP_U, 0, vLow - run / (2 * STEPS), "block");
+      }
+      // ramp side rails (deco)
+      for (const s of [-1, 1]) {
+        const rail = b(0.12, 0.8, rampL, darkWood, RAMP_U + s * 1.3, MZ / 2 + 0.2, (RAMP_LO + RAMP_HI) / 2, "deco");
+        rail.rotation.x = -Math.atan2(MZ, run);
+      }
+      // GroundPillars (capsules at u ±2.55) hold the loft up; RoofPillars stand on it
+      for (const v of [12.55, 17.55, 22.65]) for (const s of [-1, 1]) b(0.3, MZ, 0.3, darkWood, s * 2.55, 0, v, "block");
+      for (const v of [15.65, 19.65, 26.65]) for (const s of [-1, 1]) b(0.3, 4.7, 0.3, darkWood, s * 5.35, MZ, v, "block");
+      // MiddleArch: posts at the wing mouth and the arch beam over the loft
+      for (const s of [-1, 1]) b(0.6, MZ, 0.6, darkWood, s * 7.0, 0, 7.7, "block");
+      b(WING_W * 2, 0.4, 0.4, darkWood, 0, 11.2, 7.5, "deco");
+      // hay bales at the far end (two low ones with one stacked), both sides
+      for (const s of [-1, 1]) {
+        b(1.8, 0.6, 1.6, hay, s * 4.8, 0, 20.2, "both"); // |u| 3.9..5.7, v 19.4..21.0
+        b(1.8, 0.6, 1.7, hay, s * 6.3, 0, 21.05, "both"); // |u| 5.4..7.2, v 20.2..21.9
+        b(1.8, 0.6, 1.6, hay, s * 5.6, 0.6, 20.7, "both"); // |u| 4.7..6.5, v 19.9..21.5 on top
+        // chicken coops (|u| 4.5..7.0, v 24.7..27.0, 1.4 tall) with a little roof
+        b(2.5, 1.4, 2.3, wood, s * 5.75, 0, 25.85, "both");
+        b(2.9, 0.2, 2.7, darkWood, s * 5.75, 1.4, 25.85, "deco");
+      }
+      // crates against the right wall just outside the crossing (SM_Prop_Crate_03 ×3)
+      if (k === 0) {
+        crate(-6.2, 0, 7.25);
+        box(1.2, 1.1, 1.2, wood, -6.2, 1.4, 7.25, "both");
+      }
+      if (k === 2) crate(5.8, 0, 9.8);
     }
-    stairs(1, -18, 1); // to the right loft (back)
-    stairs(-1, 18, -1); // to the left loft (front)
+    scene.updateMatrixWorld(true); // the wing groups' world matrices, before the first physics step
 
     // ── X-braced crate helper ──
     function crate(x: number, y: number, z: number): void {
@@ -296,55 +378,6 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       faceX(-1, 0, Math.PI / 2);
     }
 
-    // ── two catwalk bridges across the centre, linking the lofts into one high level ──
-    // deck connects x[-9..9] at loft height; a centre post doubles as ground cover; deco
-    // side rails; a crate mid-span makes each bridge a contested high-ground duel spot.
-    for (const bz of [-9, 9]) {
-      box(18, 0.5, 3.6, wood, 0, MZ - 0.5, bz, "both");
-      box(0.6, MZ, 0.6, wood, 0, 0, bz, "block");
-      for (const s of [-1, 1]) box(18, 0.7, 0.18, darkWood, 0, MZ, bz + s * 1.85, "deco");
-    }
-
-    // ── cover: hay bales, crates, stacks, low walls — a lot more, so the middle isn't a kill field ──
-    for (const [x, z] of [[-16, -2], [-21, 9], [-14, 17], [16, -14], [21, -3], [14, 15], [-3, 5], [3, -5], [-6, 6], [6, -6], [7, 9], [-7, -9], [0, -13], [0, 13]] as const)
-      box(1.6, 1.4, 1.6, hay, x, 0, z, "both");
-    for (const [x, z] of [[-18, -12], [18, 11], [-4, 21], [4, -21], [-24, -22], [23, 22], [6, 6], [-6, -6], [12, 6], [-12, -6]] as const) crate(x, 0, z);
-    // low half-walls to peek over and shape lanes (long axis varies)
-    for (const [w, d, x, z] of [[5, 1.2, -4, -16], [5, 1.2, 4, 16], [1.2, 5, -14, 3], [1.2, 5, 14, -3]] as const) box(w, 1.05, d, wood, x, 0, z, "both");
-    // a couple of taller crate stacks for vertical cover / peeking
-    crate(-6, 0, -8);
-    box(1.2, 1.2, 1.2, wood, -6, 1.4, -8, "both");
-    crate(16, 0, -20);
-    box(1.2, 1.2, 1.2, wood, 16, 1.4, -20, "both");
-    crate(-16, 0, 20);
-    box(1.2, 1.2, 1.2, wood, -16, 1.4, 20, "both");
-    // loft + bridge cover (both sides)
-    crate(-18, MZ, 8);
-    box(1.6, 1.4, 1.6, hay, -21, MZ, -10, "both");
-    crate(18, MZ, -8);
-    box(1.6, 1.4, 1.6, hay, 21, MZ, 12, "both");
-    crate(-14, MZ, -16);
-    crate(14, MZ, 16);
-    // cover on each bridge — nudged to the inner deck edge so bots have a clear lane past it
-    // (the brN/brS nav nodes at z=∓9.8 route through the ~1.95u gap this opens)
-    crate(0, MZ, -8.1);
-    crate(0, MZ, 8.1);
-
-    // central barrel cluster (like the reference)
-    for (const [bx, bz] of [[0, 0], [1.7, 0.6], [-1.6, 1.2]] as const) {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.78, 1.5, 12), darkWood);
-      barrel.position.set(bx, 0.75, bz);
-      barrel.castShadow = true;
-      barrel.receiveShadow = true;
-      scene.add(barrel);
-      blockers.push(barrel);
-      walkables.push(barrel); // also stand-on-able, so you can't sink inside it (QA M5)
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.76, 0.06, 6, 14), wood);
-      rim.rotation.set(Math.PI / 2, 0, 0);
-      rim.position.set(bx, 1.4, bz);
-      scene.add(rim);
-    }
-
     // ── characters: the player's picked mascot + distinct ones for the bots ──
     const roster = avatarRoster(resolveLook(myLook()), N);
     const playerRig = buildAvatar3D(roster[0]!);
@@ -352,15 +385,23 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     scene.add(player);
     for (const m of playerRig.hit) m.userData.owner = PLAYER_ID; // pellets know whose body they hit
 
-    // open, obstacle-free spawn points (clear of crates, pickups, barrels, pillars)
+    // the scene's spawn points: one 20 units out in each wing (SpawnPoints) plus the six
+    // AdditionalSpawnPoints around and on top of the crossing
     const SPAWNS = [
-      new THREE.Vector3(0, 0, 7),
-      new THREE.Vector3(0, 0, -7),
-      new THREE.Vector3(-18, 0, 0),
-      new THREE.Vector3(18, 0, 0),
-      new THREE.Vector3(-10, 0, -14),
-      new THREE.Vector3(10, 0, 14),
+      ...[0, 1, 2, 3].map((k) => {
+        const w = wingXZ(k, 0.7, 20);
+        return new THREE.Vector3(w.x, 0, w.z);
+      }),
+      new THREE.Vector3(7.05, 0, -0.17),
+      new THREE.Vector3(-7.7, 0, -0.17),
+      new THREE.Vector3(-0.43, 0, -7.66),
+      new THREE.Vector3(4.99, MZ, -0.17),
+      new THREE.Vector3(-4.88, MZ, -0.17),
+      new THREE.Vector3(-0.43, MZ, -5.45),
     ];
+    // every spawn point in the scene faces the crossing (`SetPositionAndRotation(spawn.position,
+    // spawn.rotation)`, then the camera's YRotation is set from it)
+    const spawnYaw = (v: THREE.Vector3): number => (Math.atan2(-v.x, -v.z) * 180) / Math.PI;
     const pos = SPAWNS[0]!.clone();
     const mover = new CharacterMover(BARN_BRAWL_MOVER); // speed 8 · accel 55 · gravity 30 · jump 10
     const tpCam = new ThirdPersonCamera(BARN_BRAWL_CAMERA); // 2 back · 1 up · 0.5 off the right shoulder
@@ -494,9 +535,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     // mixed lobby: an easy confidence-kill, a baseline, and a hard one starting up on the
     // loft. In a party round the bots take the other board players' names.
     const ENEMY_SETUP: Array<[number, number, number, string, Difficulty]> = [
-      [18, 0, -14, "Rex", 1],
-      [-18, 0, 14, "Bruiser", 0],
-      [18, MZ, 2, "Ziggy", 2],
+      [wingXZ(1, 0.7, 20).x, 0, wingXZ(1, 0.7, 20).z, "Rex", 1],
+      [wingXZ(2, 0.7, 20).x, 0, wingXZ(2, 0.7, 20).z, "Bruiser", 0],
+      [-5, MZ, 0, "Ziggy", 2],
     ];
     for (let i = 1; i < N; i++) {
       const [ex, ey, ez, dname, diff] = ENEMY_SETUP[(i - 1) % ENEMY_SETUP.length]!;
@@ -506,7 +547,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const occluders: THREE.Object3D[] = [...blockers, ...walkables];
     const shootTargets: THREE.Object3D[] = [...occluders, ...bodies, ...playerRig.hit];
 
-    // ── shotgun pickups (the scene's ShotgunSpawnPoints: ground lanes + both lofts) ──
+    // ── shotgun pickups: the scene's 12 ShotgunSpawnPoints — on top of the four hay walls
+    // and the centre stack (y 2), on the crossing loft (±5, 6.9, 0) and at the back of each
+    // wing's loft (BackRoofSpawn, u −4.3 v 17.5) ──
     const pickups: Pickup3D[] = [];
     function makePickup(x: number, y: number, z: number): void {
       const grp = new THREE.Group();
@@ -525,7 +568,12 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       scene.add(grp);
       pickups.push({ grp, active: false, x, y, z });
     }
-    for (const [x, y, z] of [[-12, 0, 0], [12, 0, 0], [0, 0, -22], [0, 0, 22], [-18, MZ, 4], [18, MZ, -4], [-6, 0, 14], [6, 0, -14]] as const) makePickup(x, y, z);
+    const HAY_TOP = 1.6;
+    for (const [x, y, z] of [[-5.1, HAY_TOP, -0.3], [5.1, HAY_TOP, -0.3], [-0.3, HAY_TOP, 5.1], [-0.2, HAY_TOP, -5.1], [0, HAY_TOP, -0.1], [-5, MZ, 0], [5, MZ, 0]] as const) makePickup(x, y, z);
+    for (let k = 0; k < 4; k++) {
+      const w = wingXZ(k, -4.3, 17.5);
+      makePickup(w.x, MZ, w.z);
+    }
     const pickupTimer = new ActionTimer(PICKUP_TIMER[0], PICKUP_TIMER[1]);
     function activatePickup(pk: Pickup3D): void {
       pk.active = true;
@@ -754,56 +802,80 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       }
     }
 
-    // ── waypoint navigation graph (fixes M7: bots couldn't reach the lofts/bridges) ──
-    // Hand-authored nodes + edges over the real map: ground ring, a node at each stair
-    // bottom/top, loft spines, and bridge nodes linking the two lofts. Bots pathfind
-    // node→node only to CROSS levels; on the same level they fall back to direct chase,
-    // so ground fights are byte-for-byte the old behaviour.
+    // ── waypoint navigation graph (fixes M7: bots couldn't reach the lofts) ──
+    // Bots pathfind node→node only to CROSS levels or when the goal is out of sight; on the
+    // same level and in view they fall back to a direct chase.
     interface NavNode {
       x: number;
       z: number;
       y: number;
     }
-    const NAV_NODES: NavNode[] = [
-      { x: 0, z: -5, y: 0 }, // 0 gN  — centre, north of the barrel cluster
-      { x: 0, z: 5, y: 0 }, // 1 gS
-      { x: -4.5, z: 0, y: 0 }, // 2 gCW — west of barrels (0-1 is blocked by them)
-      { x: 4.5, z: 0, y: 0 }, // 3 gCE — drop-landing hub
-      { x: 2, z: -13, y: 0 }, // 4 gMidN
-      { x: -2, z: 13, y: 0 }, // 5 gMidS
-      { x: -2, z: -19, y: 0 }, // 6 gRB — right-stair base
-      { x: 2, z: 19, y: 0 }, // 7 gLB — left-stair base
-      { x: -17, z: -4, y: 0 }, // 8 gW  — under the left loft
-      { x: 17, z: 4, y: 0 }, // 9 gE  — under the right loft
-      { x: -15, z: -19, y: 0 }, // 10 gNW
-      { x: 15, z: 19, y: 0 }, // 11 gSE
-      { x: 18, z: -18.5, y: 0 }, // 12 gNE
-      { x: -18, z: 18.5, y: 0 }, // 13 gSW
-      { x: 11, z: -18, y: MZ }, // 14 rTop — right-stair top
-      { x: 11, z: 0, y: MZ }, // 15 rMid — right loft spine / drop origin
-      { x: 10.5, z: -9, y: MZ }, // 16 rBrN
-      { x: 10.5, z: 9, y: MZ }, // 17 rBrS
-      { x: 11, z: 16, y: MZ }, // 18 rS
-      { x: 24, z: 0, y: MZ }, // 19 rE — right loft outer
-      { x: -11, z: 18, y: MZ }, // 20 lTop — left-stair top
-      { x: -11, z: 0, y: MZ }, // 21 lMid — left loft spine / drop origin
-      { x: -10.5, z: 9, y: MZ }, // 22 lBrS
-      { x: -10.5, z: -9, y: MZ }, // 23 lBrN
-      { x: -11, z: -16, y: MZ }, // 24 lN
-      { x: -24, z: 0, y: MZ }, // 25 lW
-      { x: 0, z: -9.8, y: MZ }, // 26 brN — north-bridge mid (skirts the moved crate)
-      { x: 0, z: 9.8, y: MZ }, // 27 brS — south-bridge mid
-    ];
-    // [a, b, flag]: "" plain, "S" stair (auto-climbed by step-up), "D" one-way drop off a loft
-    const NAV_EDGES: Array<[number, number, string]> = [
-      [0, 2, ""], [0, 3, ""], [1, 2, ""], [1, 3, ""], [0, 4, ""], [1, 5, ""], [4, 6, ""], [5, 7, ""],
-      [2, 8, ""], [3, 9, ""], [8, 10, ""], [9, 11, ""], [10, 6, ""], [11, 7, ""], [8, 13, ""], [9, 12, ""],
-      [6, 14, "S"], [7, 20, "S"], // staircases
-      [14, 15, ""], [14, 16, ""], [15, 16, ""], [15, 17, ""], [15, 18, ""], [15, 19, ""], [17, 18, ""], // right loft
-      [20, 21, ""], [20, 22, ""], [21, 22, ""], [21, 23, ""], [21, 25, ""], [21, 24, ""], [23, 24, ""], // left loft
-      [16, 26, ""], [26, 23, ""], [22, 27, ""], [27, 17, ""], // bridges
-      [15, 3, "D"], [21, 2, "D"], // drop off the loft inner edge into the pit
-    ];
+    // Nodes and edges are generated from the extracted layout: a ring road around the centre
+    // stack between the four hay walls, two entrance lanes + a centre lane per wing, the ramp,
+    // the loft strips, the crossing loft ring, and one-way drops back down.
+    const NAV_NODES: NavNode[] = [];
+    const navId = (x: number, z: number, y: number): number => NAV_NODES.push({ x, z, y }) - 1;
+    // [a, b, flag]: "" plain, "S" ramp (walked up), "D" one-way drop off a loft
+    const NAV_EDGES: Array<[number, number, string]> = [];
+    const link = (a: number, b: number, flag = ""): void => {
+      NAV_EDGES.push([a, b, flag]);
+    };
+    const nodeAt = (ids: number[], x: number, z: number): number => ids.find((i) => Math.abs(NAV_NODES[i]!.x - x) < 0.1 && Math.abs(NAV_NODES[i]!.z - z) < 0.1)!;
+    // ground ring road (lanes at |x|, |z| = 3.3 between the hay walls)
+    const ring = [navId(3.3, 3.3, 0), navId(3.3, -3.3, 0), navId(-3.3, -3.3, 0), navId(-3.3, 3.3, 0)];
+    for (let i = 0; i < 4; i++) link(ring[i]!, ring[(i + 1) % 4]!);
+    // crossing loft ring: corners joined through the strip midpoints; drops into the ring road
+    const corners = [navId(5.25, 5.25, MZ), navId(5.25, -5.25, MZ), navId(-5.25, -5.25, MZ), navId(-5.25, 5.25, MZ)];
+    const mids = [navId(0, 5.6, MZ), navId(5.25, 0, MZ), navId(0, -5.6, MZ), navId(-5.25, 0, MZ)]; // +z, +x, −z, −x strips
+    for (let i = 0; i < 4; i++) {
+      link(corners[i]!, mids[i]!);
+      link(corners[i]!, mids[(i + 1) % 4]!);
+    }
+    for (let k = 0; k < 4; k++) {
+      // the strip facing wing k drops into the two ring nodes on that side
+      for (const s of [-1, 1]) {
+        const r = wingXZ(k, s * 3.3, 3.3);
+        link(mids[k]!, nodeAt(ring, r.x, r.z), "D");
+      }
+      // wing k, in wing-local (u, v)
+      const n = (u: number, v: number, y = 0): number => {
+        const w = wingXZ(k, u, v);
+        return navId(w.x, w.z, y);
+      };
+      const entryR = n(3.3, 8.5);
+      const entryL = n(-3.3, 8.5);
+      const mid = n(0, 14);
+      const back = n(0, 20);
+      const rampBase = n(RAMP_U, 18.2);
+      const rampTop = n(RAMP_U, 8.4, MZ);
+      const chan = n(3.35, 12, MZ); // the strip beside the ramp
+      const far1 = n(3.6, 17.5, MZ);
+      const far2 = n(3.6, 24, MZ);
+      const left1 = n(-4.3, 10, MZ);
+      const left2 = n(-4.3, 17.5, MZ); // the BackRoofSpawn shotgun
+      const left3 = n(-4.3, 24, MZ);
+      const rR = wingXZ(k, 3.3, 3.3);
+      const rL = wingXZ(k, -3.3, 3.3);
+      link(nodeAt(ring, rR.x, rR.z), entryR);
+      link(nodeAt(ring, rL.x, rL.z), entryL);
+      link(entryR, mid);
+      link(entryL, mid);
+      link(mid, back);
+      link(mid, rampBase);
+      link(back, rampBase);
+      link(rampBase, rampTop, "S");
+      link(rampTop, chan);
+      link(chan, far1);
+      link(far1, far2);
+      const cR = wingXZ(k, 5.25, 5.25);
+      const cL = wingXZ(k, -5.25, 5.25);
+      link(rampTop, nodeAt(corners, cR.x, cR.z));
+      link(left1, nodeAt(corners, cL.x, cL.z));
+      link(left1, left2);
+      link(left2, left3);
+      link(left2, back, "D");
+      link(far1, back, "D");
+    }
     const navAdj: Array<Array<{ to: number; w: number; key: string }>> = NAV_NODES.map(() => []);
     for (const [a, b] of NAV_EDGES) {
       const A = NAV_NODES[a]!;
@@ -940,8 +1012,14 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const szm = m.vz * dt;
       if (!blockedMove(p.x, p.y, p.z, sxm, 0)) p.x += sxm;
       if (!blockedMove(p.x, p.y, p.z, 0, szm)) p.z += szm;
-      p.x = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, p.x));
-      p.z = Math.max(-HALF + 0.9, Math.min(HALF - 0.9, p.z));
+      // stay inside the cross (the corner blocks are walls too; this catches tunnelling)
+      const inner = WING_W - 0.6;
+      if (Math.abs(p.x) > inner && Math.abs(p.z) > inner) {
+        if (Math.abs(p.x) - inner < Math.abs(p.z) - inner) p.x = Math.sign(p.x) * inner;
+        else p.z = Math.sign(p.z) * inner;
+      }
+      p.x = Math.max(-DOOR_V + 0.6, Math.min(DOOR_V - 0.6, p.x));
+      p.z = Math.max(-DOOR_V + 0.6, Math.min(DOOR_V - 0.6, p.z));
       const ground = groundAt(p.x, p.y, p.z);
       let ny = p.y + m.vy * dt;
       let landed = false;
@@ -1279,7 +1357,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       recoil = 0;
       pos.copy(SPAWNS[0]!);
       mover.reset();
-      tpCam.resetTo(tpCam.yaw);
+      tpCam.resetTo(spawnYaw(pos));
       // frame the spawn point now; the camera holds this while everyone drops in
       applyPose(tpCam.update(_pivot.set(pos.x, pos.y + CAPSULE_CENTER, pos.z), camProbe, 0));
       jumpQueued = false;
@@ -1516,7 +1594,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         if (playerDead <= 0) {
           pos.copy(pickSpawn());
           mover.reset();
-          tpCam.resetTo(tpCam.yaw); // `ZRotation = 5f` on respawn, keep the facing
+          tpCam.resetTo(spawnYaw(pos)); // `YRotation = spawn.rotation.y`, `ZRotation = 5f` on respawn
           player.visible = true;
           lastDeathSec = -1;
         }
