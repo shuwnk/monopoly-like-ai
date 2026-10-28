@@ -1,0 +1,24 @@
+name: Improvement
+description: Make an existing feature or the codebase better
+labels: ["improvement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: "What should change?"
+      placeholder: "What it does today and what it should do"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What's in and what's out
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      value: |
+        - [ ] 
+    validations:
+      required: true
