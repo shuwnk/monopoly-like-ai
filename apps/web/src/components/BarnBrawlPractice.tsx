@@ -9,13 +9,16 @@ import { myLook, useProfile } from "../store/profile.js";
 import { partyResult, type PartyProps } from "../game/partyRound.js";
 import { BARN_BRAWL_MOVER, CharacterMover } from "../game/characterMover.js";
 import { DigitalAxis } from "../game/digitalAxis.js";
+import { afterShot, crosshairScale, GUNS, MAX_HEALTH, pelletCount, rollPickup, SCOPE, scopeFov, scopeSensitivity, SIDEARM, spreadFor, wantsPickup, type Gun } from "../game/barnBrawlWeapons.js";
+import { DEV } from "../devMode.js";
 import { BARN_BRAWL_CAMERA, PUMMEL_FOV, ThirdPersonCamera, type CameraPose, type RaycastFn } from "../game/thirdPersonCamera.js";
 import { COUNTDOWN_LENGTH, countdownNumber, feedAlpha, makeFallers, placementDelay, resultsBrightness, ROUND_FLOW, stepFallers, timerPulseScale, type Faller } from "../game/roundFlow.js";
 
-// "Barn Brawl" — a port of Pummel Party's Barn Brawl: a one-shot shotgun scramble in a
-// two-level barn. Everyone spawns unarmed; shotguns appear around the barn; picking one
-// up gives you exactly one shot; the shot sprays 3–5 pellets and any pellet kills; the gun
-// flies out of your hands when you fire. 50 points a kill, most points after 75 s wins.
+// "Barn Brawl" — a port of Pummel Party's Barn Brawl with a wider arsenal: a weapon
+// scramble in a two-level barn. Everyone spawns with a pistol; shotguns, SMGs and sniper
+// rifles appear around the barn (the guns' numbers live in game/barnBrawlWeapons.ts). The
+// shotgun is the reference's one-shell gun: 3–5 pellets, any pellet kills, and it flies
+// out of your hands when you fire. 50 points a kill, most points after 75 s wins.
 // Movement and camera are the ported CharacterMover / ThirdPersonCamera; the round
 // presentation (spawn drop, countdown, timer pulse, kill feed, results) follows
 // MinigameController through the shared roundFlow helpers.
@@ -23,7 +26,8 @@ import { COUNTDOWN_LENGTH, countdownNumber, feedAlpha, makeFallers, placementDel
 // Sources: ~/Projects/rea-work/pummel-party/decompiled/Assembly-CSharp/BarnBrawlPlayer.cs,
 // BarnBrawlController.cs and extracted/minigames/barnbrawl.json. Numbers are cited inline;
 // only tuning and structure are reused, never the game's assets.
-// WASD move · mouse look · click fire · Space jump · click the view to capture the mouse.
+// WASD move · mouse look · click fire · right-click scope · Space jump · click the view
+// to capture the mouse.
 
 const STEP_UP = 0.55; // stair rise climbed without a jump (the CharacterController's stepOffset)
 const GROUND_SNAP = 0.45; // `slopeAdjustMax`: SmoothSlope pulls a grounded body onto ground this far below
@@ -35,19 +39,14 @@ const BODY_YAW_OFFSET = 10; // `SetPlayerRotation(rotation.Value + 10f)`
 const ROUND_LENGTH = 75; // BarnBrawlController.roundLength 75
 const KILL_SCORE = 50; // ApplyDamage: `player.Score += 50`
 const DEATH_TIME = 4; // `deathTimer = new ActionTimer(4f)`
-// the shotgun (BarnBrawlPlayer prefab): minProjectiles 3, maxProjectiles 5, spread ±10° on
-// both axes (minSpread/maxSpread), the first pellet dead centre, 30-unit pellet range
-// (`num4 = 30f`), 0.1 origin jitter (`num3`); a pellet does 1 damage to 1 health — it kills
-const PELLETS_MIN = 3;
-const PELLETS_MAX = 5;
-const SPREAD_DEG = 10;
-const PELLET_RANGE = 30;
+// the guns' own numbers (pellets, spread, range, damage, ammo, cadence) are in
+// barnBrawlWeapons.ts; every shot leaves a muzzle jittered by 0.1 (`num3`)
 const ORIGIN_JITTER = 0.1;
-// aim: the screen-centre ray's hit, clamped to 5..20 units past the character (`num2`/`num3`),
-// is where the pellets converge; the crosshair grows from ×1 at 20 units to ×2.25 at 5
+// aim: the screen-centre ray's hit, clamped to 5..aimMax units past the character
+// (`num2`/`num3`, 20 for the reference shotgun), is where the shot converges; the
+// crosshair grows from ×1 at 20 units to ×2.25 at 5
 const AIM_MIN = 5;
-const AIM_MAX = 20;
-const CROSS_NEAR = 2.25;
+const CROSS_FAR = 20;
 // pickups (BarnBrawlController): 4 spawned at the start (`i < 4`); after that every
 // `ActionTimer(2f, 4f)` another appears at a random empty point, and the count is topped
 // back up to 2 straight away whenever it drops below
@@ -55,7 +54,6 @@ const PICKUP_INITIAL = 4;
 const PICKUP_MIN = 2;
 const PICKUP_TIMER: [number, number] = [2, 4];
 const PICKUP_RADIUS = 1.3;
-const FIRE_SHAKE = 0.5; // `cameraShake.AddShake(0.5f)`
 // bots (BarnBrawlPlayer's AI), indexed by GamePlayer.Difficulty 0 easy / 1 normal / 2 hard:
 // the random look-at offset radius that mis-aims them, and the chance to hold fire when
 // the shoot-chance timer (0.8–1.2 s) elapses
@@ -63,7 +61,6 @@ type Difficulty = 0 | 1 | 2;
 const BOT_OFFSET_MIN = [1.5, 0.75, 0] as const;
 const BOT_OFFSET_MAX = [2.5, 1.25, 0.75] as const;
 const BOT_HOLD_FIRE = [0.8, 0.65, 0.4] as const;
-const BOT_SEE_RANGE = 11; // canSee raycast 11f; `num = 121f` (11²) is the engage range
 const BOT_TOO_CLOSE2 = 5; // `sqrMagnitude3 <= 5f` → back off
 const BOT_TURN = 550; // `RotateTowards(…, 550f * dt)`
 const BOT_RETREAT = 9; // `num6 = 9f`, how far the escape probes reach
@@ -114,6 +111,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
   const deadWhoRef = useRef<HTMLDivElement | null>(null);
   const deadSecRef = useRef<HTMLDivElement | null>(null);
   const weaponRef = useRef<HTMLDivElement | null>(null);
+  const hpRef = useRef<HTMLDivElement | null>(null);
+  const scopeRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<HTMLDivElement | null>(null);
   const cdRef = useRef<HTMLDivElement | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
@@ -415,26 +414,61 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     ray.far = 5;
     const FORWARD = new THREE.Vector3(0, 0, 1);
 
-    // ── the shotgun prop: in the hands while holding, tumbling away once fired ──
+    // ── the gun props: one of each kind in the hands (only the held one shown), on the
+    // pickups, and tumbling away once thrown ──
     const gunMat = new THREE.MeshStandardMaterial({ color: "#22242c", roughness: 0.5 });
     const stockMat = new THREE.MeshStandardMaterial({ color: "#6b4424", roughness: 0.8, flatShading: true });
-    function makeShotgun(): THREE.Group {
+    const GUN_KINDS: readonly Gun[] = ["pistol", "shotgun", "smg", "sniper"];
+    const accentMat = (kind: Gun): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: GUNS[kind].color, roughness: 0.6 });
+    const accents: Record<Gun, THREE.MeshStandardMaterial> = { pistol: accentMat("pistol"), shotgun: accentMat("shotgun"), smg: accentMat("smg"), sniper: accentMat("sniper") };
+    function makeGun(kind: Gun): THREE.Group {
       const g = new THREE.Group();
-      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.9), gunMat);
-      barrel.position.z = 0.2;
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.17, 0.42), stockMat);
-      stock.position.set(0, -0.04, -0.4);
-      barrel.castShadow = stock.castShadow = true;
-      g.add(barrel, stock);
+      const part = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number): void => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(x, y, z);
+        m.castShadow = true;
+        g.add(m);
+      };
+      if (kind === "pistol") {
+        part(0.08, 0.09, 0.34, gunMat, 0, 0, 0.08); // slide
+        part(0.07, 0.2, 0.1, stockMat, 0, -0.12, -0.08); // grip
+        part(0.03, 0.03, 0.08, accents.pistol, 0, 0.06, 0.18); // sight
+      } else if (kind === "shotgun") {
+        part(0.11, 0.11, 0.9, gunMat, 0, 0, 0.2); // barrel
+        part(0.13, 0.17, 0.42, stockMat, 0, -0.04, -0.4); // stock
+        part(0.05, 0.05, 0.3, accents.shotgun, 0, -0.08, 0.35); // pump
+      } else if (kind === "smg") {
+        part(0.12, 0.14, 0.55, gunMat, 0, 0, 0.1); // receiver
+        part(0.07, 0.24, 0.1, accents.smg, 0, -0.17, 0.05); // magazine
+        part(0.06, 0.08, 0.3, stockMat, 0, 0, -0.32); // stock
+        part(0.06, 0.06, 0.25, gunMat, 0, 0.02, 0.48); // barrel
+      } else {
+        part(0.08, 0.08, 1.3, gunMat, 0, 0, 0.35); // long barrel
+        part(0.12, 0.16, 0.5, stockMat, 0, -0.03, -0.45); // stock
+        part(0.07, 0.07, 0.34, accents.sniper, 0, 0.11, 0.05); // scope
+        part(0.03, 0.12, 0.03, gunMat, 0, -0.1, 0.8); // bipod leg
+      }
       g.position.set(0.3, 1.02, 0.52); // parented to the torso so it rides the body's bob
       g.visible = false; // `shotgunObject.SetActive(holding)`
       return g;
     }
-    const gun = makeShotgun();
-    playerRig.upper.add(gun);
-    // `shotgunRigidbody`: the fired gun is let go and tumbles — a small pool of falling props
+    type HeldGuns = Record<Gun, THREE.Group>;
+    function makeHeld(parent: THREE.Object3D): HeldGuns {
+      const out = {} as HeldGuns;
+      for (const k of GUN_KINDS) {
+        out[k] = makeGun(k);
+        parent.add(out[k]);
+      }
+      return out;
+    }
+    function showHeld(held: HeldGuns, kind: Gun | null): void {
+      for (const k of GUN_KINDS) held[k].visible = k === kind;
+    }
+    const guns = makeHeld(playerRig.upper);
+    // `shotgunRigidbody`: a thrown gun is let go and tumbles — a small pool of falling props
     interface DroppedGun {
-      mesh: THREE.Group;
+      mesh: THREE.Group; // carries one prop of each kind; `kinds[kind]` is the one shown
+      kinds: HeldGuns;
       vel: THREE.Vector3;
       spin: THREE.Vector3;
       life: number;
@@ -442,13 +476,16 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     }
     const dropped: DroppedGun[] = [];
     for (let i = 0; i < 6; i++) {
-      const mesh = makeShotgun();
-      mesh.position.set(0, 0, 0);
+      const mesh = new THREE.Group();
+      const kinds = makeHeld(mesh);
+      for (const k of GUN_KINDS) kinds[k].position.set(0, 0, 0);
+      mesh.visible = false;
       scene.add(mesh);
-      dropped.push({ mesh, vel: new THREE.Vector3(), spin: new THREE.Vector3(), life: 0, resting: false });
+      dropped.push({ mesh, kinds, vel: new THREE.Vector3(), spin: new THREE.Vector3(), life: 0, resting: false });
     }
-    function dropGun(from: THREE.Object3D, kickX: number, kickZ: number): void {
+    function dropGun(from: THREE.Object3D, kind: Gun, kickX: number, kickZ: number): void {
       const d = dropped.find((g) => g.life <= 0) ?? dropped[0]!;
+      showHeld(d.kinds, kind);
       from.getWorldPosition(d.mesh.position);
       from.getWorldQuaternion(d.mesh.quaternion);
       d.vel.set(-kickX * 2 + (Math.random() - 0.5), 3.5, -kickZ * 2 + (Math.random() - 0.5)); // kicks back out of the hands
@@ -466,12 +503,21 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       x: number;
       y: number;
       z: number;
+      kind: Gun; // rolled when the pickup appears
+      props: HeldGuns;
+      ring: THREE.MeshBasicMaterial;
+      glow: THREE.PointLight;
     }
     interface Enemy {
       root: THREE.Group;
       mat: THREE.MeshStandardMaterial;
       rig: Char3D;
-      gun: THREE.Group;
+      guns: HeldGuns;
+      gun: Gun;
+      ammo: number;
+      hp: number;
+      fireCool: number; // seconds until the held gun can fire again
+      burst: number; // rounds left in the current decision (the SMG fires several)
       alive: boolean;
       deathT: number; // respawn countdown while dead
       deathPop: number; // >0 while playing the death scale-pop before hiding
@@ -486,7 +532,6 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       score: number;
       kills: number;
       deaths: number;
-      holding: boolean;
       // ── BarnBrawlPlayer.GetAIInput state ──
       targetPickup: Pickup3D | null;
       targetId: number; // fighter being hunted, -2 = none
@@ -513,6 +558,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       sidestepSign: number;
       directForceT: number;
       edgePen: Map<string, number>;
+      dbg?: Record<string, unknown>; // dev readout of the last decision
     }
     const enemies: Enemy[] = [];
     const bodies: THREE.Mesh[] = [];
@@ -521,12 +567,12 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const root = c.group;
       root.position.set(x, y, z);
       scene.add(root);
-      const egun = makeShotgun();
-      c.upper.add(egun);
+      const eguns = makeHeld(c.upper);
+      showHeld(eguns, SIDEARM);
       const e: Enemy = {
-        root, mat: c.tint as THREE.MeshStandardMaterial, rig: c, gun: egun, alive: true, deathT: 0, deathPop: 0, dropping: false,
+        root, mat: c.tint as THREE.MeshStandardMaterial, rig: c, guns: eguns, gun: SIDEARM, ammo: Infinity, hp: MAX_HEALTH, fireCool: 0, burst: 0, alive: true, deathT: 0, deathPop: 0, dropping: false,
         pos: new THREE.Vector3(x, y, z), home: new THREE.Vector3(x, y, z), mover: new CharacterMover(BARN_BRAWL_MOVER),
-        name, av, id: enemies.length, difficulty, score: 0, kills: 0, deaths: 0, holding: false,
+        name, av, id: enemies.length, difficulty, score: 0, kills: 0, deaths: 0,
         targetPickup: null, targetId: -2, lookAt: new THREE.Vector3(), canSee: false, moveAway: new THREE.Vector3(x, y, z), randomMove: { x: 0, z: 0 },
         tPath: new ActionTimer(0.1, 0.15), tSee: new ActionTimer(0.05, 0.075), tTarget: new ActionTimer(0.75, 1), tMoveAway: new ActionTimer(0.4, 0.6), tRandom: new ActionTimer(0.25, 1), tShoot: new ActionTimer(0.8, 1.2),
         navMode: "direct", path: [], pathI: 0, repathNow: false, stuckT: 0, lastNavX: x, lastNavZ: z, stuckCount: 0, sidestepT: 0, sidestepSign: 1, directForceT: 0, edgePen: new Map<string, number>(),
@@ -550,26 +596,28 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const occluders: THREE.Object3D[] = [...blockers, ...walkables];
     const shootTargets: THREE.Object3D[] = [...occluders, ...bodies, ...playerRig.hit];
 
-    // ── shotgun pickups: the scene's 12 ShotgunSpawnPoints — on top of the four hay walls
+    // ── weapon pickups: the scene's 12 ShotgunSpawnPoints — on top of the four hay walls
     // and the centre stack (y 2), on the crossing loft (±5, 6.9, 0) and at the back of each
     // wing's loft (BackRoofSpawn, u −4.3 v 17.5) ──
     const pickups: Pickup3D[] = [];
     function makePickup(x: number, y: number, z: number): void {
       const grp = new THREE.Group();
       grp.position.set(x, y + 1, z);
-      const prop = makeShotgun();
-      prop.position.set(0, 0, 0);
-      prop.rotation.z = -0.5;
-      prop.visible = true;
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.03, 6, 18), new THREE.MeshBasicMaterial({ color: "#ffd98a" }));
+      const props = makeHeld(grp);
+      for (const k of GUN_KINDS) {
+        props[k].position.set(0, 0, 0);
+        props[k].rotation.z = -0.5;
+      }
+      const ringMat = new THREE.MeshBasicMaterial({ color: "#ffd98a" });
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.03, 6, 18), ringMat);
       ring.rotation.x = Math.PI / 2;
       ring.position.y = -0.35;
       const glow = new THREE.PointLight("#ffcf80", 0.6, 4);
       glow.position.y = 0.2;
-      grp.add(prop, ring, glow);
+      grp.add(ring, glow);
       grp.visible = false;
       scene.add(grp);
-      pickups.push({ grp, active: false, x, y, z });
+      pickups.push({ grp, active: false, x, y, z, kind: "shotgun", props, ring: ringMat, glow });
     }
     const HAY_TOP = 1.6;
     for (const [x, y, z] of [[-5.1, HAY_TOP, -0.3], [5.1, HAY_TOP, -0.3], [-0.3, HAY_TOP, 5.1], [-0.2, HAY_TOP, -5.1], [0, HAY_TOP, -0.1], [-5, MZ, 0], [5, MZ, 0]] as const) makePickup(x, y, z);
@@ -578,8 +626,13 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       makePickup(w.x, MZ, w.z);
     }
     const pickupTimer = new ActionTimer(PICKUP_TIMER[0], PICKUP_TIMER[1]);
+    // a pickup rolls its gun as it appears (shotguns most often) and dresses in its colour
     function activatePickup(pk: Pickup3D): void {
       pk.active = true;
+      pk.kind = rollPickup(Math.random());
+      showHeld(pk.props, pk.kind);
+      pk.ring.color.set(GUNS[pk.kind].color);
+      pk.glow.color.set(GUNS[pk.kind].color);
       pk.grp.visible = true;
     }
     function takePickup(pk: Pickup3D): void {
@@ -612,11 +665,20 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       o.start();
       o.stop(ac.currentTime + dur);
     };
-    // a shotgun boom, quieter with distance from the player (`shotgunFire` at 0.7)
-    function boom(at: THREE.Vector3): void {
+    // each gun's report, quieter with distance from the player (`shotgunFire` at 0.7)
+    function shotSound(kind: Gun, at: THREE.Vector3): void {
       const k = Math.max(0.15, 1 - at.distanceTo(pos) / 40);
-      blip(95, 0.2, "sawtooth", 0.28 * k, 28);
-      blip(1800, 0.05, "square", 0.08 * k, 400);
+      if (kind === "shotgun") {
+        blip(95, 0.2, "sawtooth", 0.28 * k, 28);
+        blip(1800, 0.05, "square", 0.08 * k, 400);
+      } else if (kind === "sniper") {
+        blip(140, 0.3, "sawtooth", 0.3 * k, 20);
+        blip(2400, 0.08, "square", 0.08 * k, 300);
+      } else if (kind === "smg") {
+        blip(520, 0.045, "square", 0.1 * k, 160);
+      } else {
+        blip(300, 0.07, "square", 0.14 * k, 90);
+      }
     }
     const announcer = createAnnouncer();
 
@@ -675,7 +737,22 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     // ── player state ──
     let playerDead = 0; // death countdown while dead
     let killerId = PLAYER_ID; // who got us (drives the death text + the killer cam)
-    let holding = false; // `HoldingShotgun`
+    let curGun: Gun = SIDEARM; // what's in the hands (`HoldingShotgun` was a bool)
+    let ammo = Infinity;
+    let hp = MAX_HEALTH;
+    let fireCool = 0;
+    let fireHeld = false; // left button down: the SMG keeps firing
+    let scopeHeld = false; // right button down: the sniper's scope
+    let scopeT = 0; // 0 hip … 1 scoped, eased over SCOPE.time
+    let hitT = 0; // hit-marker flash after a non-lethal hit
+    let debugUnlocked = false; // the dev readout can stand in for pointer lock
+    const shotLog: Record<string, number> = {}; // dev readout: shots and hits per fighter
+    const hitLog: Record<string, number> = {};
+    function setGun(kind: Gun): void {
+      curGun = kind;
+      ammo = GUNS[kind].ammo;
+      showHeld(guns, kind);
+    }
     let score = 0;
     let kills = 0;
     let deaths = 0;
@@ -736,6 +813,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         kills++;
         announcer.onKill(false);
         killedT = 1.3;
+        hitT = 0.3;
         if (killedRef.current) killedRef.current.textContent = `Killed ${fighterName(victim)}`;
       } else {
         const k = enemies[by]!;
@@ -749,8 +827,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       e.deathT = DEATH_TIME;
       e.deathPop = 0.22; // scale-pop, then hide (handled in the frame loop)
       e.deaths++;
-      e.holding = false;
-      e.gun.visible = false;
+      setBotGun(e, SIDEARM);
       e.mover.reset();
       burst(e.pos.x, e.pos.y + 1.2, e.pos.z, e.mat.color, 16, 3.4, 0.34, 6); // confetti-blood
       blip(180, 0.3, "sawtooth", 0.2, 55);
@@ -761,8 +838,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       playerDead = DEATH_TIME;
       killerId = by;
       deaths++;
-      holding = false;
-      gun.visible = false;
+      setGun(SIDEARM);
       hurtT = 0.5;
       mover.reset();
       announcer.onDeath();
@@ -772,36 +848,63 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       creditKill(by, PLAYER_ID);
     }
 
-    // ── the shot (`DoShotgunShot`): 3–5 pellets in a ±10° cone from a jittered muzzle, each a
-    // 30-unit ray; the first pellet is dead centre; the first body a pellet meets dies ──
+    // ── damage: a shotgun pellet or a sniper round kills outright (`ApplyDamage` →
+    // `KillPlayer`, 1 pellet to 1 health); the pistol and the SMG chip MAX_HEALTH down ──
+    function hurt(victim: number, dmg: number, by: number, at: THREE.Vector3): void {
+      if (!fighterAlive(victim)) return;
+      if (DEV) hitLog[fighterName(by)] = (hitLog[fighterName(by)] ?? 0) + 1;
+      burst(at.x, at.y, at.z, fighterColor(victim), 5, 3, 0.26, 4); // confetti-blood
+      if (victim === PLAYER_ID) {
+        hp -= dmg;
+        hurtT = Math.max(hurtT, 0.3);
+        blip(230, 0.08, "square", 0.12, 120);
+        if (hp <= 0) killPlayer(by);
+        return;
+      }
+      const e = enemies[victim]!;
+      e.hp -= dmg;
+      if (e.hp <= 0) killEnemy(e, by);
+      else if (by === PLAYER_ID) {
+        hitT = 0.15; // the hit marker
+        blip(900, 0.04, "square", 0.12, 700);
+      }
+    }
+
+    // ── the shot (`DoShotgunShot`, generalised): the gun's pellets in a ±spread cone from a
+    // jittered muzzle, each a ray of the gun's range; the first pellet of a spray is dead
+    // centre; the first body a ray meets takes the gun's damage ──
     const shotRay = new THREE.Raycaster();
-    function fireShotgun(shooter: number, origin: THREE.Vector3, aimDir: THREE.Vector3): void {
-      const n = PELLETS_MIN + Math.floor(Math.random() * (PELLETS_MAX - PELLETS_MIN + 1));
+    function fireGun(shooter: number, kind: Gun, origin: THREE.Vector3, aimDir: THREE.Vector3, scoped: boolean): void {
+      const g = GUNS[kind];
+      const n = pelletCount(kind, Math.random());
+      const spread = spreadFor(kind, scoped);
+      if (DEV) shotLog[fighterName(shooter)] = (shotLog[fighterName(shooter)] ?? 0) + 1;
       const baseQ = new THREE.Quaternion().setFromUnitVectors(FORWARD, aimDir.clone().normalize());
       muzzleLight.position.copy(origin);
-      muzzleLight.intensity = 10;
-      boom(origin);
+      muzzleLight.color.set(g.color);
+      muzzleLight.intensity = kind === "smg" ? 5 : 10;
+      shotSound(kind, origin);
       for (let i = 0; i < n; i++) {
-        const pitch = i === 0 ? 0 : (Math.random() * 2 - 1) * SPREAD_DEG;
-        const yaw = i === 0 ? 0 : (Math.random() * 2 - 1) * SPREAD_DEG;
+        const centre = i === 0 && n > 1;
+        const pitch = centre ? 0 : (Math.random() * 2 - 1) * spread;
+        const yaw = centre ? 0 : (Math.random() * 2 - 1) * spread;
         const dir = FORWARD.clone()
           .applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * DEG, yaw * DEG, 0, "YXZ"))) // `Quaternion.Euler(x, y, 0)`
           .applyQuaternion(baseQ);
         const o = origin.clone().addScaledVector(randomUnit(), Math.random() * ORIGIN_JITTER);
         shotRay.set(o, dir);
-        shotRay.far = PELLET_RANGE;
-        let end = o.clone().addScaledVector(dir, PELLET_RANGE);
+        shotRay.far = g.range;
+        let end = o.clone().addScaledVector(dir, g.range);
         for (const h of shotRay.intersectObjects(shootTargets, false)) {
           const owner = h.object.userData.owner as number | undefined;
           if (owner === shooter) continue; // never your own body
           if (owner !== undefined && !fighterAlive(owner)) continue; // corpses don't stop pellets
           end = h.point.clone();
           if (owner === undefined) burst(end.x, end.y, end.z, 0xc9a86a, 4, 2.2, 0.24, 1.6); // `HandleImpact` wood puff
-          else if (owner === PLAYER_ID) killPlayer(shooter);
-          else killEnemy(enemies[owner]!, shooter);
+          else hurt(owner, g.damage, shooter, end);
           break; // the first solid thing stops the pellet
         }
-        addTracer(o, end, shooter === PLAYER_ID ? 0xfff0c0 : 0xffb8a0);
+        addTracer(o, end, g.color);
       }
     }
 
@@ -1069,9 +1172,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     }
 
     // ── bot AI: BarnBrawlPlayer.GetAIInput, with the waypoint graph standing in for the
-    // NavMeshAgent. Unarmed → walk to the nearest shotgun. Armed → hunt the nearest rival
-    // with a random mis-aim offset by difficulty; shoot when it's in sight and in front,
-    // strafe randomly while it's in sight, back off when it's on top of you. ──
+    // NavMeshAgent. On the pistol → walk to the nearest pickup (shooting whoever crosses the
+    // sights on the way). Otherwise hunt the nearest rival with a random mis-aim offset by
+    // difficulty; shoot when it's in sight, in the gun's range and in front; strafe randomly
+    // while it's in sight; back off when it's on top of you. ──
     const _goal = new THREE.Vector3();
     const _v = new THREE.Vector3();
     function randomMovement(e: Enemy): void {
@@ -1098,17 +1202,28 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         }
       }
     }
+    // a bot's hands: the gun, its ammo, and a shoot-chance timer at that gun's cadence
+    // (`shootChanceTimer.Start()` whenever HoldingShotgun flips)
+    function setBotGun(e: Enemy, kind: Gun): void {
+      e.gun = kind;
+      e.ammo = GUNS[kind].ammo;
+      e.burst = 0;
+      showHeld(e.guns, kind);
+      e.tShoot = new ActionTimer(GUNS[kind].botCadence[0], GUNS[kind].botCadence[1]);
+      e.tShoot.restart(clock);
+    }
     // bots shoot along the body's facing (`LookRotation(transform.forward)`), level — the
-    // mis-aim offset has already turned the body
-    function botFire(e: Enemy): void {
+    // mis-aim offset has already turned the body; an emptied gun flies out of the hands
+    function botShoot(e: Enemy): void {
       const ry = e.root.rotation.y;
       const dir = new THREE.Vector3(Math.sin(ry), 0, Math.cos(ry));
       const origin = new THREE.Vector3(e.pos.x + dir.x * 0.5, e.pos.y + 1.2, e.pos.z + dir.z * 0.5);
-      fireShotgun(e.id, origin, dir);
-      e.holding = false;
-      dropGun(e.gun, dir.x, dir.z);
-      e.gun.visible = false;
-      e.tShoot.restart(clock);
+      fireGun(e.id, e.gun, origin, dir, true);
+      e.fireCool = GUNS[e.gun].cooldown;
+      const next = afterShot(e.gun, e.ammo);
+      if (next.thrown) dropGun(e.guns[e.gun], e.gun, dir.x, dir.z);
+      e.ammo = next.ammo;
+      if (next.gun !== e.gun) setBotGun(e, next.gun);
     }
     interface Steer {
       x: number;
@@ -1214,9 +1329,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     }
     function botAI(e: Enemy, dt: number): void {
       const p = e.pos;
-      // ── unarmed: the nearest shotgun on the map ──
-      if (!e.holding && (e.targetPickup === null || !e.targetPickup.active || e.tTarget.elapsed(clock))) {
-        e.targetId = -2;
+      const retarget = e.tTarget.elapsed(clock);
+      // ── on the sidearm: the nearest pickup on the map ──
+      if (!wantsPickup(e.gun)) e.targetPickup = null;
+      else if (e.targetPickup === null || !e.targetPickup.active || retarget) {
         e.targetPickup = null;
         let best = Infinity;
         for (const pk of pickups) {
@@ -1228,9 +1344,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
           }
         }
       }
-      // ── armed: the nearest living rival; a newcomer must be 20 % closer to steal focus ──
-      if (e.holding && (e.targetId === -2 || !fighterAlive(e.targetId) || e.tTarget.elapsed(clock))) {
-        e.targetPickup = null;
+      // ── the nearest living rival; a newcomer must be 20 % closer to steal focus ──
+      if (e.targetId === -2 || !fighterAlive(e.targetId) || retarget) {
         const prev = e.targetId;
         let best = prev !== -2 && fighterAlive(prev) ? fighterPos(prev).distanceToSquared(p) * 0.8 : Infinity;
         for (let id = PLAYER_ID; id < enemies.length; id++) {
@@ -1248,6 +1363,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         }
       }
       const tgtId = e.targetId !== -2 && fighterAlive(e.targetId) ? e.targetId : -2;
+      const range = GUNS[e.gun].botRange; // canSee's 11f for the shotgun, longer for the rest
       let goal = e.targetPickup ? _goal.set(e.targetPickup.x, e.targetPickup.y, e.targetPickup.z) : tgtId !== -2 ? _goal.copy(fighterPos(tgtId)) : _goal.copy(p);
       let facing = false;
       if (tgtId !== -2) {
@@ -1256,18 +1372,19 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         _v.normalize();
         facing = _v.x * Math.sin(e.root.rotation.y) + _v.z * Math.cos(e.root.rotation.y) > 0.85; // `Dot(…, forward) > 0.85`
       }
-      if (tgtId !== -2 && e.holding && e.tSee.elapsed(clock)) {
+      if (tgtId !== -2 && e.tSee.elapsed(clock)) {
         const tp = fighterPos(tgtId);
-        e.canSee = p.distanceTo(tp) <= BOT_SEE_RANGE && losClear(p.x, p.y + 0.9, p.z, tp.x, tp.y + 0.9, tp.z);
+        e.canSee = p.distanceTo(tp) <= range && losClear(p.x, p.y + 0.9, p.z, tp.x, tp.y + 0.9, tp.z);
       }
       if (tgtId === -2) e.canSee = false;
-      const d2 = goal.distanceToSquared(p);
+      const tDist2 = tgtId !== -2 ? fighterPos(tgtId).distanceToSquared(p) : Infinity;
+      const inRange = e.canSee && tDist2 <= range * range;
       let mv: Steer | null = null;
       let rx = 0;
       let rz = 0;
       let jump = false;
-      if (!e.canSee || !e.holding || d2 > BOT_SEE_RANGE * BOT_SEE_RANGE || d2 <= BOT_TOO_CLOSE2) {
-        if (d2 <= BOT_TOO_CLOSE2 && tgtId !== -2) {
+      if (e.targetPickup || !inRange || tDist2 <= BOT_TOO_CLOSE2) {
+        if (!e.targetPickup && tDist2 <= BOT_TOO_CLOSE2) {
           if (e.tMoveAway.elapsed(clock)) pickRetreat(e);
           goal = _goal.copy(e.moveAway);
         }
@@ -1275,19 +1392,31 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         rx = mv.x;
         rz = mv.z;
         jump = mv.jump;
-      } else if (facing) {
-        if (e.tShoot.elapsed(clock) && Math.random() > BOT_HOLD_FIRE[e.difficulty]) botFire(e);
-        randomMovement(e);
-        rx = e.randomMove.x;
-        rz = e.randomMove.z;
       } else {
         randomMovement(e);
         rx = e.randomMove.x;
         rz = e.randomMove.z;
       }
-      // face the steering point while fetching a gun, the goal otherwise — plus the mis-aim
-      let fx = (e.targetPickup && mv ? mv.fx : goal.x) - p.x;
-      let fz = (e.targetPickup && mv ? mv.fz : goal.z) - p.z;
+      // the trigger: a rival in sight, in range and in front → the shoot-chance timer rolls
+      // against the difficulty's hold-fire chance; a pass fires one shot (pistol, shotgun,
+      // sniper) or a burst (SMG), one round per cooldown
+      e.fireCool = Math.max(0, e.fireCool - dt);
+      if (DEV) e.dbg = { tgt: tgtId, canSee: e.canSee, inRange, facing, range, dist: Math.sqrt(tDist2), fetching: e.targetPickup !== null, yaw: e.root.rotation.y, burst: e.burst };
+      if (inRange && facing) {
+        if (e.burst <= 0 && e.tShoot.elapsed(clock) && Math.random() > BOT_HOLD_FIRE[e.difficulty]) {
+          const [bMin, bMax] = GUNS[e.gun].botBurst;
+          e.burst = bMin + Math.floor(Math.random() * (bMax - bMin + 1));
+        }
+        if (e.burst > 0 && e.fireCool <= 0) {
+          e.burst--;
+          botShoot(e);
+        }
+      } else e.burst = 0;
+      // face the rival while it's in sight and in range, the steering point while fetching
+      // a gun, the goal otherwise — plus the mis-aim
+      const faceRival = tgtId !== -2 && inRange;
+      let fx = (faceRival ? fighterPos(tgtId).x : e.targetPickup && mv ? mv.fx : goal.x) - p.x;
+      let fz = (faceRival ? fighterPos(tgtId).z : e.targetPickup && mv ? mv.fz : goal.z) - p.z;
       if (tgtId !== -2) {
         fx += e.lookAt.x;
         fz += e.lookAt.z;
@@ -1316,8 +1445,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       e.pos.copy(pickSpawn());
       e.mover.reset();
       e.root.position.copy(e.pos);
-      e.holding = false;
-      e.gun.visible = false;
+      setBotGun(e, SIDEARM);
+      e.hp = MAX_HEALTH;
+      e.fireCool = 0;
       e.targetId = -2;
       e.targetPickup = null;
       e.canSee = false;
@@ -1354,8 +1484,15 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       playerDead = 0;
       killerId = PLAYER_ID;
       lastDeathSec = -1;
-      holding = false;
-      gun.visible = false;
+      setGun(SIDEARM);
+      hp = MAX_HEALTH;
+      fireCool = 0;
+      fireHeld = false;
+      scopeHeld = false;
+      scopeT = 0;
+      hitT = 0;
+      camera.fov = PUMMEL_FOV;
+      camera.updateProjectionMatrix();
       hurtT = 0;
       killedT = 0;
       shake = 0;
@@ -1377,8 +1514,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         e.alive = true;
         e.deathPop = 0;
         e.deathT = 0;
-        e.holding = false;
-        e.gun.visible = false;
+        setBotGun(e, SIDEARM);
+        e.hp = MAX_HEALTH;
+        e.fireCool = 0;
         e.root.visible = true;
         e.root.scale.setScalar(1);
         e.pos.copy(e.home);
@@ -1491,7 +1629,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
     }
     function frame(now: number): void {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
       last = now;
       clock += dt;
 
@@ -1637,8 +1775,8 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const turnStep = BODY_TURN * DEG * dt;
       player.rotation.y += Math.abs(dRot) <= turnStep ? dRot : Math.sign(dRot) * turnStep;
       player.position.copy(pos);
-      // `ShotgunStrength`: the arms come up onto the gun only while holding one
-      animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: !playerDropping && mover.grounded, aim: holding ? 1 : 0 });
+      // `ShotgunStrength`: the arms come up onto the gun once the round is on
+      animateChar(playerRig, Math.hypot(mover.vx, mover.vz), dt, { vx: mover.vx, vz: mover.vz, grounded: !playerDropping && mover.grounded, aim: playing && alive ? 1 : 0 });
 
       // ── camera ──
       recoil = Math.max(0, recoil - dt * (0.4 + recoil * 5));
@@ -1669,33 +1807,49 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
         camera.rotateX(Math.sin(t * 1.1 + 4) * s * 15 * DEG);
       }
 
-      // ── aiming (`Update` while holding): the screen-centre ray, clamped 5..20 past the
-      // character, is where the pellets converge; the crosshair reads distance and target ──
-      if (alive && holding) {
+      // ── the scope (sniper + right button): the FOV eases 70° → 24° over 0.15 s, the
+      // mouse slows with it, the overlay fades in ──
+      const scoping = alive && playing && scopeHeld && GUNS[curGun].scope;
+      const scopeGoal = scoping ? 1 : 0;
+      if (scopeT !== scopeGoal) {
+        scopeT = reduceMotion ? scopeGoal : Math.max(0, Math.min(1, scopeT + (scoping ? dt : -dt) / SCOPE.time));
+        camera.fov = scopeFov(scopeT);
+        camera.updateProjectionMatrix();
+      }
+
+      // ── aiming (`Update` while holding): the screen-centre ray, clamped 5..aimMax past
+      // the character, is where the shot converges; the crosshair reads distance and target ──
+      const aimMax = GUNS[curGun].aimMax;
+      if (alive) {
         camera.getWorldDirection(aimDir);
-        gun.getWorldPosition(muzzle).addScaledVector(_tmp.set(fwd.x, 0, fwd.z), 0.45);
+        guns[curGun].getWorldPosition(muzzle).addScaledVector(_tmp.set(fwd.x, 0, fwd.z), 0.45);
         const tPlane = Math.max(0, _tmp.copy(muzzle).sub(camera.position).dot(aimDir));
         aimRay.set(camera.position, aimDir);
-        aimRay.far = tPlane + AIM_MAX + 0.01;
+        aimRay.far = tPlane + aimMax + 0.01;
         const hit = aimRay.intersectObjects(shootTargets, false).find((h) => {
           const o = h.object.userData.owner as number | undefined;
           return o === undefined || (o !== PLAYER_ID && fighterAlive(o));
         });
         aimOnBody = hit !== undefined && hit.object.userData.owner !== undefined;
         aimDist = hit ? hit.distance - tPlane : Infinity;
-        targetPoint.copy(camera.position).addScaledVector(aimDir, hit ? tPlane + Math.max(AIM_MIN, Math.min(AIM_MAX, aimDist)) : tPlane + AIM_MAX);
+        targetPoint.copy(camera.position).addScaledVector(aimDir, hit ? tPlane + Math.max(AIM_MIN, Math.min(aimMax, aimDist)) : tPlane + aimMax);
       }
-      if (fireQueued) {
-        fireQueued = false;
-        if (playing && alive && holding && document.pointerLockElement === canvas) {
-          void ac.resume();
-          fireShotgun(PLAYER_ID, muzzle, _tmp.copy(targetPoint).sub(muzzle));
-          holding = false; // `HoldingShotgun = false` — one shell, then it's gone
-          dropGun(gun, fwd.x, fwd.z);
-          gun.visible = false;
-          shake = Math.min(1, shake + FIRE_SHAKE);
-          recoil += 0.05;
-        }
+      // ── the trigger: a click fires any gun, holding it keeps the SMG going; one round per
+      // cooldown; the emptied gun flies out of the hands and the pistol comes back up ──
+      fireCool = Math.max(0, fireCool - dt);
+      const wantFire = fireQueued || (fireHeld && GUNS[curGun].auto);
+      fireQueued = false;
+      if (wantFire && playing && alive && fireCool <= 0 && ammo > 0 && (document.pointerLockElement === canvas || debugUnlocked)) {
+        void ac.resume();
+        const g = GUNS[curGun];
+        fireCool = g.cooldown;
+        fireGun(PLAYER_ID, curGun, muzzle, _tmp.copy(targetPoint).sub(muzzle), scopeT > 0.5);
+        shake = Math.min(1, shake + g.shake); // `cameraShake.AddShake(0.5f)` for the shotgun
+        recoil += g.recoil;
+        const next = afterShot(curGun, ammo);
+        if (next.thrown) dropGun(guns[curGun], curGun, fwd.x, fwd.z); // `HoldingShotgun = false` — one shell, then it's gone
+        ammo = next.ammo;
+        if (next.gun !== curGun) setGun(next.gun);
       }
 
       // ── tracers, particles, dropped guns ──
@@ -1757,28 +1911,25 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
           continue;
         }
         if (playing) botAI(e, dt);
-        animateChar(e.rig, Math.hypot(e.mover.vx, e.mover.vz), dt, { vx: e.mover.vx, vz: e.mover.vz, grounded: !e.dropping && e.mover.grounded, aim: e.holding ? 1 : 0 });
+        animateChar(e.rig, Math.hypot(e.mover.vx, e.mover.vz), dt, { vx: e.mover.vx, vz: e.mover.vz, grounded: !e.dropping && e.mover.grounded, aim: playing ? 1 : 0 });
       }
 
-      // ── pickups: float/spin; grabbed by whoever is unarmed and walks over (`OnTrigger`) ──
+      // ── pickups: float/spin; grabbed by whoever is on the pistol and walks over (`OnTrigger`) ──
       for (const pk of pickups) {
         if (!pk.active) continue;
         pk.grp.rotation.y += dt * 1.6;
         pk.grp.position.y = pk.y + 1 + Math.sin(clock * 2 + pk.x) * 0.1;
         if (!playing) continue;
-        if (alive && !holding && Math.hypot(pos.x - pk.x, pos.z - pk.z) < PICKUP_RADIUS && Math.abs(pos.y - pk.y) < 1.6) {
-          holding = true;
-          gun.visible = true;
+        if (alive && wantsPickup(curGun) && Math.hypot(pos.x - pk.x, pos.z - pk.z) < PICKUP_RADIUS && Math.abs(pos.y - pk.y) < 1.6) {
+          setGun(pk.kind);
           takePickup(pk);
           blip(560, 0.14, "square", 0.2, 980); // `shotgunPickup` at 0.25
           continue;
         }
         for (const e of enemies) {
-          if (e.alive && !e.holding && Math.hypot(e.pos.x - pk.x, e.pos.z - pk.z) < PICKUP_RADIUS && Math.abs(e.pos.y - pk.y) < 1.6) {
-            e.holding = true;
-            e.gun.visible = true;
+          if (e.alive && wantsPickup(e.gun) && Math.hypot(e.pos.x - pk.x, e.pos.z - pk.z) < PICKUP_RADIUS && Math.abs(e.pos.y - pk.y) < 1.6) {
+            setBotGun(e, pk.kind);
             e.targetPickup = null;
-            e.tShoot.restart(clock); // `shootChanceTimer.Start()` whenever HoldingShotgun flips
             takePickup(pk);
             break;
           }
@@ -1787,15 +1938,21 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       if (playing) pickupTick();
 
       // ── HUD ──
+      hitT = Math.max(0, hitT - dt);
       if (crossRef.current) {
         const el = crossRef.current;
-        el.style.display = playing && alive && holding ? "block" : "none"; // `crossHair.enabled = holding`
-        const k = aimDist <= AIM_MIN ? CROSS_NEAR : aimDist >= AIM_MAX ? 1 : CROSS_NEAR - (CROSS_NEAR - 1) * ((aimDist - AIM_MIN) / (AIM_MAX - AIM_MIN));
+        el.style.display = playing && alive && scopeT < 0.5 ? "block" : "none"; // `crossHair.enabled = holding`; the scope brings its own
+        const k = crosshairScale(aimDist, AIM_MIN, CROSS_FAR);
         el.style.transform = `scale(${k.toFixed(3)})`;
-        el.style.color = aimOnBody ? "rgba(255,40,40,0.75)" : "rgba(255,255,255,0.6)";
+        el.style.color = hitT > 0 ? "rgba(255,220,60,0.95)" : aimOnBody ? "rgba(255,40,40,0.75)" : "rgba(255,255,255,0.6)";
       }
+      if (scopeRef.current) scopeRef.current.style.opacity = scopeT.toFixed(3);
       if (killedRef.current) killedRef.current.style.opacity = String(Math.min(1, killedT / 0.3));
-      if (weaponRef.current) weaponRef.current.textContent = !alive ? "" : holding ? "Shotgun · one shell" : "Unarmed · find a shotgun";
+      if (weaponRef.current) {
+        const g = GUNS[curGun];
+        weaponRef.current.textContent = !alive ? "" : `${g.name} · ${ammo === Infinity ? "∞" : ammo}${g.scope ? " · right-click to scope" : ""}`;
+      }
+      if (hpRef.current) hpRef.current.style.width = `${Math.max(0, (hp / MAX_HEALTH) * 100).toFixed(1)}%`;
       if (scoreRef.current) scoreRef.current.textContent = `Score ${score} · Kills ${kills}`;
       if (vignRef.current) vignRef.current.style.opacity = String(Math.min(0.55, hurtT));
       if (deadRef.current) deadRef.current.style.display = playerDead > 0 ? "grid" : "none";
@@ -1822,17 +1979,52 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
     const ku = (e: KeyboardEvent): void => void keys.delete(e.key.toLowerCase());
     const mvs = (e: MouseEvent): void => {
       if (document.pointerLockElement !== canvas || mode !== "playing") return; // `RotateCamera` only while Playable
-      tpCam.rotate(e.movementX, e.movementY); // 0.18°/px, pitch clamped to ±89°
+      const s = scopeSensitivity(scopeT); // the scope slows the mouse with the FOV
+      tpCam.rotate(e.movementX * s, e.movementY * s); // 0.18°/px, pitch clamped to ±89°
     };
     const mdn = (e: MouseEvent): void => {
       if (document.pointerLockElement !== canvas) return;
-      if (e.button === 0) fireQueued = true;
+      if (e.button === 0) {
+        fireQueued = true;
+        fireHeld = true;
+      } else if (e.button === 2) scopeHeld = true;
+    };
+    const mup = (e: MouseEvent): void => {
+      if (e.button === 0) fireHeld = false;
+      else if (e.button === 2) scopeHeld = false;
+    };
+    const plc = (): void => {
+      if (document.pointerLockElement !== canvas) fireHeld = scopeHeld = false; // Esc released the mouse mid-hold
     };
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
     window.addEventListener("mousemove", mvs);
     window.addEventListener("mousedown", mdn);
+    window.addEventListener("mouseup", mup);
+    document.addEventListener("pointerlockchange", plc);
+    // a dev-only readout (and a manual frame step, for when the tab's rAF is throttled)
+    // so a browser automation run can check where everyone is
+    if (DEV) {
+      (window as unknown as { __barn?: unknown }).__barn = {
+        tick: (ms: number) => {
+          cancelAnimationFrame(raf);
+          frame(last + ms);
+          last = performance.now(); // the next real frame measures from now, not from the fake stamp
+        },
+        me: () => ({ x: pos.x, y: pos.y, z: pos.z, gun: curGun, ammo, hp, alive: playerDead <= 0, kills, deaths, grounded: mover.grounded }),
+        bots: () => enemies.map((e) => ({ name: e.name, x: e.pos.x, y: e.pos.y, z: e.pos.z, gun: e.gun, ammo: e.ammo, hp: e.hp, alive: e.alive, dbg: e.dbg })),
+        pickups: () => pickups.filter((pk) => pk.active).map((pk) => ({ kind: pk.kind, x: pk.x, y: pk.y, z: pk.z })),
+        stats: () => ({ shots: { ...shotLog }, hits: { ...hitLog }, fov: camera.fov, scopeT }),
+        unlock: (on: boolean) => void (debugUnlocked = on),
+        fire: () => void (fireQueued = true),
+        hold: (on: boolean) => void (fireHeld = on),
+        scope: (on: boolean) => void (scopeHeld = on),
+        look: (dx: number, dy: number) => tpCam.rotate(dx, dy),
+        give: (kind: Gun) => setGun(kind),
+        teleport: (x: number, y: number, z: number) => void pos.set(x, y, z),
+      };
+    }
 
     return () => {
       cancelAnimationFrame(raf);
@@ -1840,6 +2032,9 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       window.removeEventListener("keyup", ku);
       window.removeEventListener("mousemove", mvs);
       window.removeEventListener("mousedown", mdn);
+      window.removeEventListener("mouseup", mup);
+      document.removeEventListener("pointerlockchange", plc);
+      if (DEV) delete (window as unknown as { __barn?: unknown }).__barn;
       canvas.style.filter = "";
       announcer.dispose();
       void ac.close();
@@ -1879,7 +2074,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
             <div ref={vignRef} style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0, boxShadow: "inset 0 0 120px 40px #b01818", borderRadius: 8 }} />
             <div style={{ position: "absolute", inset: 0, pointerEvents: "none", display: "grid", placeItems: "center" }}>
               <div style={{ position: "relative", width: 22, height: 60, display: "grid", justifyItems: "center", alignContent: "start" }}>
-                {/* the aimer: only while holding a shotgun; grows as the target gets close, red over a body */}
+                {/* the aimer: grows as the target gets close, red over a body, yellow on a hit */}
                 <div ref={crossRef} style={{ position: "relative", width: 22, height: 22, display: "none", color: "rgba(255,255,255,0.6)", transition: "transform 80ms linear" }}>
                   <div style={{ position: "absolute", left: 10, top: 0, width: 2, height: 22, background: "currentColor" }} />
                   <div style={{ position: "absolute", top: 10, left: 0, width: 22, height: 2, background: "currentColor" }} />
@@ -1891,7 +2086,17 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
             {/* the kill feed (`AddKillFeed`): lines appended by the sim, top-right */}
             <div ref={feedRef} style={{ position: "absolute", top: 12, right: 16, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, fontWeight: 800, fontSize: 15, textShadow: "0 1px 3px #000", pointerEvents: "none" }} />
             <div ref={scoreRef} style={{ position: "absolute", top: 12, left: 16, color: "#fff", fontWeight: 800, fontSize: 16, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Score 0 · Kills 0</div>
-            <div ref={weaponRef} style={{ position: "absolute", right: 16, bottom: 16, color: "#fff", fontWeight: 800, fontSize: 17, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Unarmed · find a shotgun</div>
+            <div ref={weaponRef} style={{ position: "absolute", right: 16, bottom: 16, color: "#fff", fontWeight: 800, fontSize: 17, textShadow: "0 1px 3px #000", pointerEvents: "none" }}>Pistol · ∞</div>
+            {/* health, bottom-left: the pistol and the SMG chip it down; a pellet or a sniper round empties it */}
+            <div style={{ position: "absolute", left: 16, bottom: 16, width: 160, height: 10, background: "rgba(0,0,0,0.45)", borderRadius: 5, overflow: "hidden", pointerEvents: "none" }}>
+              <div ref={hpRef} style={{ height: "100%", width: "100%", background: "#6fe36f", transition: "width 120ms linear" }} />
+            </div>
+            {/* the sniper's scope: a dark mask with a round window and a fine reticle, faded in with the FOV */}
+            <div ref={scopeRef} style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0, borderRadius: 8, background: "radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0 27%, rgba(0,0,0,0.55) 27.5%, rgba(0,0,0,0.96) 31%)" }}>
+              <div style={{ position: "absolute", left: "50%", top: "50%", width: 2, height: "60%", background: "rgba(0,0,0,0.85)", transform: "translate(-50%, -50%)" }} />
+              <div style={{ position: "absolute", left: "50%", top: "50%", height: 2, width: "60%", background: "rgba(0,0,0,0.85)", transform: "translate(-50%, -50%)" }} />
+              <div style={{ position: "absolute", left: "50%", top: "50%", width: 6, height: 6, borderRadius: 3, background: "#ff3b3b", transform: "translate(-50%, -50%)" }} />
+            </div>
             <div ref={deadRef} style={{ position: "absolute", inset: 0, display: "none", placeItems: "center", background: "rgba(40,10,10,0.45)", borderRadius: 8, color: "#fff", pointerEvents: "none", textAlign: "center" }}>
               <div>
                 <div ref={deadWhoRef} style={{ fontWeight: 900, fontSize: 30 }} />
@@ -1912,7 +2117,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, background: "rgba(20,12,6,0.82)", borderRadius: 8, textAlign: "center", padding: 24 }}>
             <div style={{ fontSize: 26, fontWeight: 900, color: "#ffe6bf" }}>Barn Brawl</div>
             <div style={{ fontSize: 15, opacity: 0.85, maxWidth: 480, lineHeight: 1.5 }}>
-              <strong>WASD</strong> move · <strong>mouse</strong> look · <strong>click</strong> fire · <strong>Space</strong> jump. Grab a shotgun: one shell, any pellet kills, and the gun flies out of your hands when you fire. {KILL_SCORE} points a kill — most points in {ROUND_LENGTH} seconds wins.
+              <strong>WASD</strong> move · <strong>mouse</strong> look · <strong>click</strong> fire · <strong>right-click</strong> scope the sniper · <strong>Space</strong> jump. You start with a pistol. Grab a shotgun (one shell, any pellet kills), an SMG (30 rounds, hold to fire) or a sniper (one round, scope it); an empty gun flies out of your hands. {KILL_SCORE} points a kill — most points in {ROUND_LENGTH} seconds wins.
             </div>
             <button className="primary" style={{ fontSize: 18, padding: "10px 26px" }} onClick={() => beginRef.current?.()}>
               Start Brawl
