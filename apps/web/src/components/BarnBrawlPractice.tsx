@@ -314,8 +314,10 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // ramp (Stairs/Ramp): u 4.7..7.2, from the ground at v 17.2 up to the loft at v 9.4
       const run = RAMP_LO - RAMP_HI;
       const rampL = Math.hypot(run, MZ);
+      // (a positive x rotation lifts the box's −z end: the head at v 9.4 goes up, the
+      // foot at v 17.2 stays on the ground)
       const ramp = b(2.5, 0.3, rampL, wood, RAMP_U, MZ / 2 - 0.15, (RAMP_LO + RAMP_HI) / 2, "walk");
-      ramp.rotation.x = -Math.atan2(MZ, run);
+      ramp.rotation.x = Math.atan2(MZ, run);
       // the fill beneath it (Blocker1–3) so nobody walks under or through it: each step is
       // as tall as the ramp's underside at the step's LOWER end, so it never pokes through
       // the surface in front of someone walking up
@@ -328,7 +330,7 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // ramp side rails (deco)
       for (const s of [-1, 1]) {
         const rail = b(0.12, 0.8, rampL, darkWood, RAMP_U + s * 1.3, MZ / 2 + 0.2, (RAMP_LO + RAMP_HI) / 2, "deco");
-        rail.rotation.x = -Math.atan2(MZ, run);
+        rail.rotation.x = Math.atan2(MZ, run);
       }
       // GroundPillars (capsules at u ±2.55) hold the loft up; RoofPillars stand on it
       for (const v of [12.55, 17.55, 22.65]) for (const s of [-1, 1]) b(0.3, MZ, 0.3, darkWood, s * 2.55, 0, v, "block");
