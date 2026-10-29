@@ -338,11 +338,12 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       // MiddleArch: posts at the wing mouth and the arch beam over the loft
       for (const s of [-1, 1]) b(0.6, MZ, 0.6, darkWood, s * 7.0, 0, 7.7, "block");
       b(WING_W * 2, 0.4, 0.4, darkWood, 0, 11.2, 7.5, "deco");
-      // hay bales at the far end (two low ones with one stacked), both sides
+      // hay bales at the far end (two low ones with one stacked), both sides — a step
+      // tall, so they're climbed like the reference's bales rather than bumped into
       for (const s of [-1, 1]) {
-        b(1.8, 0.6, 1.6, hay, s * 4.8, 0, 20.2, "both"); // |u| 3.9..5.7, v 19.4..21.0
-        b(1.8, 0.6, 1.7, hay, s * 6.3, 0, 21.05, "both"); // |u| 5.4..7.2, v 20.2..21.9
-        b(1.8, 0.6, 1.6, hay, s * 5.6, 0.6, 20.7, "both"); // |u| 4.7..6.5, v 19.9..21.5 on top
+        b(1.8, 0.5, 1.6, hay, s * 4.8, 0, 20.2, "both"); // |u| 3.9..5.7, v 19.4..21.0
+        b(1.8, 0.5, 1.7, hay, s * 6.3, 0, 21.05, "both"); // |u| 5.4..7.2, v 20.2..21.9
+        b(1.8, 0.5, 1.6, hay, s * 5.6, 0.5, 20.7, "both"); // |u| 4.7..6.5, v 19.9..21.5 on top
         // chicken coops (|u| 4.5..7.0, v 24.7..27.0, 1.4 tall) with a little roof
         b(2.5, 1.4, 2.3, wood, s * 5.75, 0, 25.85, "both");
         b(2.9, 0.2, 2.7, darkWood, s * 5.75, 1.4, 25.85, "deco");
@@ -986,9 +987,11 @@ export function BarnBrawlPractice({ onLeave, party }: { onLeave: () => void; par
       const rad = 0.38;
       const perpx = -dir.z * rad;
       const perpz = dir.x * rad;
-      // cast from the centre AND both side edges so walls can't slip past the radius
+      // cast from the centre AND both side edges so walls can't slip past the radius; the
+      // ray sits just above the step height, so anything taller than a step is a wall
+      // instead of something to walk through
       for (const o of [0, 1, -1]) {
-        ray.set(new THREE.Vector3(px + perpx * o, py + 0.9, pz + perpz * o), dir);
+        ray.set(new THREE.Vector3(px + perpx * o, py + STEP_UP + 0.05, pz + perpz * o), dir);
         ray.far = dist + rad;
         if (ray.intersectObjects(blockers, false).length > 0) return true;
       }
