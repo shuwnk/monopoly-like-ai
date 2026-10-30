@@ -1,6 +1,9 @@
 // A port of Pummel Party's `ThirdPersonCamera`: a tight over-the-shoulder rig that
-// orbits a pivot at the character's feet, pulls in as you look up or down, sits off
-// the right shoulder, and slides in off walls then eases back out. Pure maths — the
+// orbits the player root — the capsule centre, ~0.95 above the feet (the character mesh
+// is parented at y −0.954 in the player prefab) — pulls in as you look up or down, sits
+// off the right shoulder, and slides in off walls then eases back out. Looking level,
+// the camera therefore sits about a head above the character and the crosshair line
+// runs through its head, with the body in the lower half of the frame. Pure maths — the
 // caller supplies the raycast and applies the result to its camera.
 //
 // Source: ~/Projects/rea-work/pummel-party/decompiled/Assembly-CSharp/ThirdPersonCamera.cs
@@ -29,15 +32,15 @@ export interface CameraTuning {
   pitchMax: number;
   /** degrees per mouse unit = mouse sensitivity × rotation speed (0.06 × 3) */
   degreesPerPixel: number;
-  /** collider height; the pivot-relative offsets are measured from its half */
+  /** collider height; the pivot is its centre and the pitch rise scales with its half */
   characterHeight: number;
 }
 
 // Barn Brawl's player prefab (extracted/minigames/barnbrawl.json → ThirdPersonCamera):
 // m_maxCameraDistance 2, m_cameraOffsetY 1. The rest are the code defaults from
 // ThirdPersonCamera.cs: offsetZ 0.5, lookForward 1, lookScale 1.9, wallOffset 0.2,
-// recovery 5/s, pitch ±89°, mouse 0.06 × y/z rotation speed 3. Character height 1.75
-// (the ragdoll spawns from position + 0.875 up, i.e. mid-height).
+// recovery 5/s, pitch ±89°, mouse 0.06 × y/z rotation speed 3. Character height 1.9:
+// the CharacterController is centred on the root with the mesh 0.954 below it.
 export const BARN_BRAWL_CAMERA: CameraTuning = {
   maxDistance: 2,
   offsetY: 1,
@@ -49,7 +52,7 @@ export const BARN_BRAWL_CAMERA: CameraTuning = {
   pitchMin: -89,
   pitchMax: 89,
   degreesPerPixel: 0.06 * 3,
-  characterHeight: 1.75,
+  characterHeight: 1.9,
 };
 
 /** vertical field of view every Simple-mode / minigame camera uses (FINDINGS.md §8) */
@@ -120,7 +123,7 @@ export class ThirdPersonCamera {
   }
 
   /**
-   * `UpdateCamera`. `pivot` is the character's feet. `pitchKick` is an extra, transient
+   * `UpdateCamera`. `pivot` is the player root (capsule centre). `pitchKick` is an extra, transient
    * pitch in degrees (recoil) that isn't written back into the state.
    */
   update(pivot: Vec3, raycast: RaycastFn, dt: number, pitchKick = 0): CameraPose {
