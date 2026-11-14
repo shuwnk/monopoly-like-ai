@@ -43,6 +43,22 @@ export const BREAKING_BLOCKS_CAMERA: FollowCameraTuning = {
   followDeadPlayers: false,
 };
 
+// Strategic Shockwave: CameraParent at (0, 22.5, 15.1) pitched 55° toward −z over a floor at
+// y 4.34, Camera FOV 40; CameraFollow Square, area x ±10 / z −5…10, max move 3 / 3. In our
+// frame the floor is y 0 and the rig sits on −z looking toward +z, so y, z and the z range flip.
+export const STRATEGIC_SHOCKWAVE_CAMERA: FollowCameraTuning = {
+  start: { x: 0, y: 18.16, z: -15.1 },
+  pitchDeg: 55,
+  fov: 40,
+  maxXMoveDist: 3,
+  maxZMoveDist: 3,
+  minX: -10,
+  maxX: 10,
+  minZ: -10,
+  maxZ: 5,
+  followDeadPlayers: false,
+};
+
 export interface FollowTarget {
   x: number;
   y: number;

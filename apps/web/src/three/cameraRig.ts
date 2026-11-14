@@ -3,7 +3,7 @@ import * as THREE from "three";
 // Camera helpers for the 3D minigames.
 //
 // `frameArena` — a fixed, angled whole-arena view for the grid games (Floor Drop,
-// Floor Brawl, Bomberman). Deliberately NOT straight-down: a shallow tilt keeps the
+// Floor Brawl). Deliberately NOT straight-down: a shallow tilt keeps the
 // humanoid avatars reading as characters rather than head-dots. It sizes the distance
 // from the camera's FOV so the whole arena of the given radius fits in frame.
 
