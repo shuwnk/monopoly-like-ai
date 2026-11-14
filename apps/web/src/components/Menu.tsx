@@ -177,7 +177,7 @@ export function Menu({
                 Bomber — Bomberman-style maze battle
               </button>
               <button style={{ width: "100%" }} onClick={onBarn}>
-                Barn Brawl — one-shot shotgun scramble
+                Barn Brawl — four-gun scramble: pistol, shotgun, SMG, sniper
               </button>
             </div>
           </Card>
