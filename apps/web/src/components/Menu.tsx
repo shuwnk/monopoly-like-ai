@@ -174,7 +174,7 @@ export function Menu({
                 Brawl: Showdown — 3D arena brawler with Supers
               </button>
               <button style={{ width: "100%" }} onClick={onBomber}>
-                Bomber — Bomberman-style maze battle
+                Bomber — bomb the wheel, last one standing
               </button>
               <button style={{ width: "100%" }} onClick={onBarn}>
                 Barn Brawl — one-shot shotgun scramble
